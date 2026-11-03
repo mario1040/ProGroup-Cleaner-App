@@ -3,6 +3,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import ProfessorLogo from "./ProfessorLogo";
 import SwitchLabelsGuide from "./SwitchLabelsGuide";
+import SystemDocumentationGuide from "./SystemDocumentationGuide";
 import FirestoreQuotaBanner from "./FirestoreQuotaBanner";
 import { BookOpen } from "lucide-react";
 import { 
@@ -128,7 +129,7 @@ function ReportImage({
 
 export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   // Navigation tabs for the Admin Panel
-  const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'approvals' | 'kpis' | 'sop' | 'operational' | 'employees' | 'reports' | 'inventory' | 'switch_labels'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'approvals' | 'kpis' | 'sop' | 'operational' | 'employees' | 'reports' | 'inventory' | 'switch_labels' | 'documentation'>('overview');
   
   // App data states
   const [tasks, setTasks] = useState<(TaskInstance & { zone?: Zone; assignee?: Profile; template?: TaskTemplate })[]>([]);
@@ -1684,7 +1685,8 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
               { id: 'inventory', label: 'إدارة المخزون والمعدات', icon: Box },
               { id: 'employees', label: 'إدارة الموظفين وكلمات المرور', icon: Users },
               { id: 'reports', label: 'التقارير الشهرية والأرشيف', icon: Calendar },
-              { id: 'switch_labels', label: 'دليل مفاتيح الإضاءة 💡', icon: BookOpen }
+              { id: 'switch_labels', label: 'دليل مفاتيح الإضاءة 💡', icon: BookOpen },
+              { id: 'documentation', label: 'دليل وشرح المنظومة 📖', icon: BookOpen }
             ].map((item: any) => {
               const Icon = item.icon;
               const isSelected = activeTab === item.id;
@@ -3994,6 +3996,12 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                   <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs">
                     <SwitchLabelsGuide />
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'documentation' && (
+                <div className="flex flex-col gap-6 text-right" style={{ direction: 'rtl' }}>
+                  <SystemDocumentationGuide onBack={() => setActiveTab('overview')} initialRole={user.role === 'admin' ? 'admin' : 'supervisor'} />
                 </div>
               )}
 

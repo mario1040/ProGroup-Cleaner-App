@@ -93,13 +93,15 @@ interface TodayTasksPageProps {
   onLogout: () => void;
   onNavigateToKpis: () => void;
   onNavigateToSwitchGuide: () => void;
+  onNavigateToDocumentation?: () => void;
 }
 
 export default function TodayTasksPage({ 
   user, 
   onLogout, 
   onNavigateToKpis,
-  onNavigateToSwitchGuide
+  onNavigateToSwitchGuide,
+  onNavigateToDocumentation
 }: TodayTasksPageProps) {
   const [tasks, setTasks] = useState<(TaskInstance & { zone?: Zone; assignee?: Profile; template?: TaskTemplate })[]>([]);
   const [loading, setLoading] = useState(true);
@@ -435,7 +437,7 @@ export default function TodayTasksPage({
               </span>
             </div>
             
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={onNavigateToSwitchGuide}
                 className="bg-sky-600 hover:bg-sky-700 text-white text-xs py-2 px-3 rounded-xl font-semibold cursor-pointer shadow-md shadow-sky-600/15 transition flex items-center gap-1.5"
@@ -448,6 +450,14 @@ export default function TodayTasksPage({
               >
                 <Sparkles className="w-3.5 h-3.5 text-indigo-200" /> مؤشراتي 🏆
               </button>
+              {onNavigateToDocumentation && (
+                <button
+                  onClick={onNavigateToDocumentation}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 px-3 rounded-xl font-semibold cursor-pointer shadow-md shadow-emerald-600/15 transition flex items-center gap-1.5"
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-emerald-200" /> دليل المنظومة 📖
+                </button>
+              )}
               <button
                 onClick={onLogout}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2 px-3 rounded-xl font-semibold cursor-pointer transition border border-slate-700"

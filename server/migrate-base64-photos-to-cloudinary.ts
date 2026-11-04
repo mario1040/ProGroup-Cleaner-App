@@ -82,8 +82,19 @@ async function main(): Promise<void> {
     for (const row of result.rows) {
       tasksScanned += 1;
       const raw = isRecord(row.raw_data) ? { ...row.raw_data } : {};
-      const before = findDataUri(raw, BEFORE_KEYS, ["before", "before_url"]);
-      const after = findDataUri(raw, AFTER_KEYS, ["after", "after_url"]);
+      let before: string | null;
+      let after: string | null;
+      try {
+        before = findDataUri(raw, BEFORE_KEYS, ["before", "before_url"]);
+        after = findDataUri(raw, AFTER_KEYS, ["after", "after_url"]);
+      } catch (error) {
+        failures += 1;
+        process.stderr.write(JSON.stringify({
+          task_id: row.id,
+          error: error instanceof Error ? error.message : "Photo reconciliation error",
+        }) + "\\n");
+        continue;
+      }
       if (!before && !after) continue;
       if (!apply) {
         process.stdout.write(JSON.stringify({ mode: "dry-run", task_id: row.id, before: Boolean(before), after: Boolean(after) }) + "\n");

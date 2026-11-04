@@ -271,7 +271,7 @@ app.get("/health/ready", asyncRoute(async (_req, res) => {
       "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
       "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
       "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +
-      "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END" +
+      "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END, "CASE WHEN to_regclass('public.inventory_items') IS NULL THEN 'inventory_items' END"" +
     "], NULL) AS missing",
   );
   const missing = result.rows[0]?.missing || [];
@@ -666,6 +666,159 @@ app.get("/api/device-switches", requireAuth, asyncRoute(async (_req, res) => {
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
 }));
 
+
+const inventoryCategories = new Set(["معدات تنظيف", "مواد كيميائية", "مستهلكات", "أخرى"]);
+function getInventoryStatus(quantity: number, minQuantity: number): "متوفر" | "منخفض" | "نفد" {
+  if (quantity === 0) return "نفد";
+  return quantity <= minQuantity ? "منخفض" : "متوفر";
+}
+
+app.get("/api/inventory-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
+  const result = await pool.query(
+    "SELECT id, name, category, quantity, min_quantity, status, updated_at FROM inventory_items ORDER BY category, name, id",
+  );
+  res.json({ data: result.rows.map((row) => ({
+    id: row.id, name: row.name, category: row.category,
+    quantity: Number(row.quantity), min_quantity: Number(row.min_quantity),
+    status: row.status, last_updated: row.updated_at,
+  })) });
+}));
+
+app.post("/api/inventory-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const category = typeof body.category === "string" ? body.category : "";
+  const quantity = Number(body.quantity);
+  const minQuantity = body.min_quantity === undefined ? 5 : Number(body.min_quantity);
+  if (!name || name.length > 160 || !inventoryCategories.has(category)) {
+    res.status(400).json({ error: "A valid name and inventory category are required" }); return;
+  }
+  if (!Number.isSafeInteger(quantity) || quantity < 0 ||
+      !Number.isSafeInteger(minQuantity) || minQuantity < 0) {
+    res.status(400).json({ error: "quantity and min_quantity must be non-negative integers" }); return;
+  }
+  const id = "inv_" + randomBytes(10).toString("hex");
+  const now = new Date().toISOString();
+  const status = getInventoryStatus(quantity, minQuantity);
+  const item = { id, name, category, quantity, min_quantity: minQuantity, status, last_updated: now };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "INSERT INTO inventory_items (id, name, category, quantity, min_quantity, status, raw_data, created_at, updated_at) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$8::timestamptz)",
+      [id, name, category, quantity, minQuantity, status, JSON.stringify(item), now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "inventory_item_created", JSON.stringify({ inventory_item_id: id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "inventory_item_created", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ data: item });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.patch("/api/inventory-items/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  const allowed = new Set(["name", "category", "quantity", "min_quantity"]);
+  for (const key of Object.keys(body)) {
+    if (!allowed.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 160)) {
+    res.status(400).json({ error: "name must be a non-empty string up to 160 characters" }); return;
+  }
+  if (body.category !== undefined && (typeof body.category !== "string" || !inventoryCategories.has(body.category))) {
+    res.status(400).json({ error: "Unsupported inventory category" }); return;
+  }
+  for (const key of ["quantity", "min_quantity"]) {
+    const value = body[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0)) {
+      res.status(400).json({ error: key + " must be a non-negative integer" }); return;
+    }
+  }
+  if (Object.keys(body).length === 0) {
+    res.status(400).json({ error: "At least one inventory field must be provided" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT id, name, category, quantity, min_quantity FROM inventory_items WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Inventory item not found" }); return;
+    }
+    const row = selected.rows[0];
+    const name = typeof body.name === "string" ? body.name.trim() : String(row.name);
+    const category = typeof body.category === "string" ? body.category : String(row.category);
+    const quantity = body.quantity === undefined ? Number(row.quantity) : Number(body.quantity);
+    const minQuantity = body.min_quantity === undefined ? Number(row.min_quantity) : Number(body.min_quantity);
+    const status = getInventoryStatus(quantity, minQuantity);
+    const now = new Date().toISOString();
+    const item = { id: String(row.id), name, category, quantity, min_quantity: minQuantity, status, last_updated: now };
+    await client.query(
+      "UPDATE inventory_items SET name=$2, category=$3, quantity=$4, min_quantity=$5, status=$6, raw_data=$7::jsonb, updated_at=$8::timestamptz WHERE id=$1",
+      [row.id, name, category, quantity, minQuantity, status, JSON.stringify(item), now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "inventory_item_updated", JSON.stringify({ inventory_item_id: row.id, changed_fields: Object.keys(body), actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "inventory_item_updated", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ data: item });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.delete("/api/inventory-items/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT id FROM inventory_items WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Inventory item not found" }); return;
+    }
+    await client.query("DELETE FROM inventory_items WHERE id = $1", [req.params.id]);
+    const now = new Date().toISOString();
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "inventory_item_deleted", JSON.stringify({ inventory_item_id: req.params.id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "inventory_item_deleted", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ success: true });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.get("/api/kpis", requireAuth, asyncRoute(async (req, res) => {
   let startDate = typeof req.query.startDate === "string" ? req.query.startDate : "";
   let endDate = typeof req.query.endDate === "string" ? req.query.endDate : "";
@@ -762,6 +915,7 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches"],
     ["kpi_snapshots", "SELECT COUNT(*)::int AS count FROM kpi_snapshots"],
     ["audit_logs", "SELECT COUNT(*)::int AS count FROM audit_logs"],
+    ["inventory_items", "SELECT COUNT(*)::int AS count FROM inventory_items"],
   ] as const;
   const details: Array<{
     collectionName: string; totalDocs: number; passedDocs: number;

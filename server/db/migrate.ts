@@ -16,7 +16,7 @@ async function main(): Promise<void> {
     await pool.query(schema);
     const required = [
       "users", "auth_sessions", "locations", "zones", "sop_items", "task_templates",
-      "task_instances", "operational_tasks", "device_switches",
+      "task_instances", "task_media", "operational_tasks", "device_switches",
       "kpi_snapshots", "audit_logs", "task_generation_runs",
       "firestore_documents",
     ];

@@ -309,9 +309,10 @@ app.post("/api/users", requireAuth, allowRoles("admin"), asyncRoute(async (req, 
   try {
     await client.query("BEGIN");
     await client.query(
-      "INSERT INTO users (id, username, full_name, role, is_active, password_record, raw_data, created_at) " +
-      "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz)",
-      [id, username, fullName, role, raw.is_active, hashPassword(generatedPassword), JSON.stringify(raw), now],
+      "INSERT INTO users (id, username, full_name, phone, role, is_active, password_record, raw_data, created_at) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::timestamptz)",
+      [id, username, fullName, typeof body.phone === "string" ? body.phone : null, role,
+        raw.is_active, hashPassword(generatedPassword), JSON.stringify(raw), now],
     );
     const auditId = "audit_" + randomBytes(12).toString("hex");
     await client.query(
@@ -416,12 +417,15 @@ app.patch("/api/users/:id", requireAuth, allowRoles("admin"), asyncRoute(async (
     delete merged.password;
     const passwordRecord = typeof body.password === "string" ? hashPassword(body.password) : row.password_record;
     await client.query(
-      "UPDATE users SET username = $2, full_name = $3, role = $4, is_active = $5, " +
-      "password_record = $6, raw_data = $7::jsonb, updated_at = $8::timestamptz WHERE id = $1",
+      "UPDATE users SET username = $2, full_name = $3, phone = $4, role = $5, is_active = $6, " +
+      "password_record = $7, raw_data = $8::jsonb, updated_at = $9::timestamptz WHERE id = $1",
       [req.params.id, merged.username || row.username, merged.full_name || row.full_name,
-        merged.role || row.role, merged.is_active !== false, passwordRecord,
-        JSON.stringify(merged), merged.updated_at],
+        typeof merged.phone === "string" ? merged.phone : null, merged.role || row.role,
+        merged.is_active !== false, passwordRecord, JSON.stringify(merged), merged.updated_at],
     );
+    if (merged.is_active === false) {
+      await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [req.params.id]);
+    }
     const auditId = "audit_" + randomBytes(12).toString("hex");
     await client.query(
       "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",

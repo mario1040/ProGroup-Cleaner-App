@@ -146,6 +146,14 @@ function getBusinessDate(): string {
   return String(values.year) + "-" + String(values.month) + "-" + String(values.day);
 }
 
+function dateOnly(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === "string") return value.slice(0, 10);
+  return "";
+}
+
 function isValidDateOnly(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(value + "T00:00:00.000Z");
@@ -483,7 +491,7 @@ app.post("/api/users/:id/reassign-pending", requireAuth, allowRoles("admin", "su
       res.status(409).json({ error: "No active cleaners are available for reassignment" }); return;
     }
     const cleanerIds = cleaners.rows.map((row) => String(row.id));
-    const dates = [...new Set(pending.rows.map((row) => String(row.due_date).slice(0, 10)))];
+    const dates = [...new Set(pending.rows.map((row) => dateOnly(row.due_date)))];
     const workload = new Map<string, Map<string, number>>();
     for (const date of dates) {
       const counts = await client.query(

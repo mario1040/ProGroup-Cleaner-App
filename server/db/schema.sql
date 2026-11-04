@@ -1,6 +1,20 @@
 -- Naris Ops PostgreSQL foundation.
 -- Firestore document IDs and legacy references are kept as text.
--- raw_data preserves original source fields during staged migration.
+-- raw_data preserves source fields; user password records are kept separately.
+
+CREATE TABLE IF NOT EXISTS firestore_documents (
+  collection_name TEXT NOT NULL,
+  document_path TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_create_time TIMESTAMPTZ,
+  source_update_time TIMESTAMPTZ,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (collection_name, document_path)
+);
+
+CREATE INDEX IF NOT EXISTS firestore_documents_collection_idx
+  ON firestore_documents (collection_name, document_id);
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -8,10 +22,13 @@ CREATE TABLE IF NOT EXISTS users (
   full_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('admin', 'supervisor', 'cleaner')),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  password_record TEXT,
   raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_record TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_ci_uq
   ON users (LOWER(username));

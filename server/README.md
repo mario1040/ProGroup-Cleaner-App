@@ -123,6 +123,8 @@ Security foundation:
 - HTTP-only session cookie, 12-hour expiry, and server-side revocation.
 - Login attempt throttling by source IP.
 - CORS origin allowlist via `APP_ALLOWED_ORIGINS`.
+- Production write requests require an allowlisted `Origin`; session cookies default to `SameSite=Lax` (`SESSION_COOKIE_SAMESITE=None` is allowed only over production HTTPS for a deliberately cross-site deployment).
+- `/health/ready` verifies the required core tables exist; task date ranges require both endpoints and are capped at 366 days.
 - Password records are never returned by API profile endpoints.
 - Database errors and SQL details are not returned to clients.
 

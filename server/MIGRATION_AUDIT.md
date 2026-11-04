@@ -125,3 +125,17 @@ Do not mark migration complete until every gate is evidenced:
 ## Current decision
 
 Continue implementation on this branch only. Keep PR #1 draft. Do not create or connect the new PostgreSQL container yet, do not run the importer against an existing database, do not enable the scheduler, and do not remove Firebase.
+
+## Implementation update — 2026-11-04
+
+The branch now also includes:
+- A strict connection guard used by API startup, the importer and task scheduler. It accepts only the database path `/naris_ops`; attempts to target `marketing_ops`, Evolution, or another database fail before opening a connection.
+- Automated tests for accepted/rejected database targets, and CI now runs all server tests.
+- Normalized tables and importer upserts for `operational_tasks`, `device_switches`, `kpi_snapshots` and `audit_logs`, while retaining each source document in the generic archive table.
+- Read-only API endpoints for locations, operational tasks, device switches, KPI snapshots and audit logs, with role scoping for operational tasks and cleaner-specific KPI/audit visibility.
+- Task reads now have validated calendar dates, a maximum 366-day range and bounded pagination.
+- Readiness checks include the newly normalized tables.
+
+CI run `41803408830` for commit `6b5ae191e95e47b72325662a7ad2c04e1cad044f` completed successfully: server tests, TypeScript check and frontend production build all passed.
+
+These additions do **not** complete the migration. The frontend still calls Firebase; task mutations and lifecycle routes are not implemented; API integration tests and restore/parity tests remain absent. Keep the PR draft and Firebase active.

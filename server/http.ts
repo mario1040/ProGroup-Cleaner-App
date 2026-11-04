@@ -1424,6 +1424,58 @@ app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncR
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
 }));
 
+app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {
+  const publicId = typeof req.body?.public_id === "string" ? req.body.public_id.trim() : "";
+  const taskId = typeof req.body?.task_id === "string" ? req.body.task_id.trim() : "";
+  if (!publicId || publicId.length > 500 || !taskId || taskId.length > 200) {
+    res.status(400).json({ error: "public_id and task_id are required" }); return;
+  }
+  const taskResult = await pool.query(
+    "SELECT assigned_to, zone_id FROM task_instances WHERE id = $1",
+    [taskId],
+  );
+  if (taskResult.rowCount !== 1) {
+    res.status(404).json({ error: "Task not found" }); return;
+  }
+  const task = taskResult.rows[0];
+  if (req.auth?.role === "cleaner" && task.assigned_to !== req.auth.id) {
+    res.status(403).json({ error: "You can only clean up media for your assigned tasks" }); return;
+  }
+  if (req.auth?.role !== "cleaner" && req.auth?.role !== "admin" && req.auth?.role !== "supervisor") {
+    res.status(403).json({ error: "Not authorized to delete media" }); return;
+  }
+  const expectedPrefix = "task-photos/" + String(task.zone_id) + "/" + taskId + "/";
+  if (!publicId.startsWith(expectedPrefix)) {
+    res.status(400).json({ error: "Cloudinary public_id does not belong to this task" }); return;
+  }
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME || "";
+  const apiKey = process.env.CLOUDINARY_API_KEY || "";
+  const apiSecret = process.env.CLOUDINARY_API_SECRET || "";
+  if (!cloudName || !apiKey || !apiSecret) {
+    res.status(503).json({ error: "Cloudinary server-side deletion is not configured" }); return;
+  }
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = createHash("sha1")
+    .update("public_id=" + publicId + "&timestamp=" + timestamp + apiSecret, "utf8")
+    .digest("hex");
+  const form = new URLSearchParams({
+    public_id: publicId,
+    timestamp,
+    api_key: apiKey,
+    signature,
+  });
+  const response = await fetch("https://api.cloudinary.com/v1_1/" + encodeURIComponent(cloudName) + "/image/destroy", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form,
+  });
+  const payload = await response.json().catch(() => ({})) as { result?: string; error?: { message?: string } };
+  if (!response.ok || (payload.result !== "ok" && payload.result !== "not found")) {
+    res.status(502).json({ error: payload.error?.message || "Cloudinary media deletion failed" }); return;
+  }
+  res.json({ success: true, result: payload.result });
+}));
+
 app.post("/api/tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
     ? req.body as Record<string, unknown>
@@ -1722,6 +1774,7 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
   const cleanerFields = new Set([
     "status", "employee_notes", "employee_signature_url",
     "photo_before_url", "photo_after_url",
+    "photo_before_public_id", "photo_after_public_id",
     "photo_before_taken_at", "photo_before_uploaded_at",
     "photo_after_taken_at", "photo_after_uploaded_at",
     "photo_before_size", "photo_after_size",

@@ -17,6 +17,7 @@ async function main(): Promise<void> {
         "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
         "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
         "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
+        "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
         "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
         "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
         "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +

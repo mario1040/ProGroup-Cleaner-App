@@ -421,6 +421,73 @@ app.get("/api/device-switches", requireAuth, asyncRoute(async (_req, res) => {
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
 }));
 
+app.get("/api/kpis", requireAuth, asyncRoute(async (req, res) => {
+  let startDate = typeof req.query.startDate === "string" ? req.query.startDate : "";
+  let endDate = typeof req.query.endDate === "string" ? req.query.endDate : "";
+  if (!startDate && !endDate) {
+    const today = getBusinessDate();
+    const [year, month] = today.split("-").map(Number);
+    startDate = String(year) + "-" + String(month).padStart(2, "0") + "-01";
+    const nextMonth = new Date(Date.UTC(year, month, 1));
+    endDate = nextMonth.getUTCFullYear() + "-" +
+      String(nextMonth.getUTCMonth() + 1).padStart(2, "0") + "-01";
+  }
+  if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
+    res.status(400).json({ error: "Valid startDate and endDate are required" }); return;
+  }
+  const span = (Date.parse(endDate + "T00:00:00Z") - Date.parse(startDate + "T00:00:00Z")) / 86400000;
+  if (span > 366) {
+    res.status(400).json({ error: "KPI date range cannot exceed 366 days" }); return;
+  }
+  const values: unknown[] = [startDate, endDate];
+  let cleanerFilter = "";
+  if (req.auth?.role === "cleaner") {
+    values.push(req.auth.id);
+    cleanerFilter = " AND u.id = $" + values.length;
+  }
+  const result = await pool.query(
+    "SELECT u.id AS profile_id, u.full_name AS cleaner_name, u.username, " +
+    "COUNT(t.id)::int AS tasks_assigned, " +
+    "COUNT(t.id) FILTER (WHERE t.status = 'completed' AND COALESCE((t.raw_data->>'supervisor_approved')::boolean, FALSE))::int AS completed_approved, " +
+    "COUNT(t.id) FILTER (WHERE t.status = 'completed' AND COALESCE((t.raw_data->>'supervisor_approved')::boolean, FALSE) AND COALESCE(NULLIF(t.raw_data->>'delay_minutes','')::numeric,0) <= 0)::int AS tasks_completed_on_time, " +
+    "COUNT(t.id) FILTER (WHERE t.status = 'completed' AND COALESCE(NULLIF(t.raw_data->>'delay_minutes','')::numeric,0) > 0)::int AS tasks_late, " +
+    "COUNT(t.id) FILTER (WHERE t.task_type = 'rework')::int AS tasks_reworked, " +
+    "COUNT(t.id) FILTER (WHERE t.status = 'rejected')::int AS tasks_rejected, " +
+    "COALESCE(AVG(EXTRACT(EPOCH FROM ((t.raw_data->>'completed_at')::timestamptz - (t.raw_data->>'started_at')::timestamptz))/60.0) " +
+    "FILTER (WHERE NULLIF(t.raw_data->>'started_at','') IS NOT NULL AND NULLIF(t.raw_data->>'completed_at','') IS NOT NULL " +
+    "AND (t.raw_data->>'completed_at')::timestamptz > (t.raw_data->>'started_at')::timestamptz),0) AS avg_execution_time_minutes, " +
+    "COALESCE(AVG(CASE t.raw_data->>'quality_grade' WHEN 'A' THEN 100.0 WHEN 'B' THEN 80.0 WHEN 'C' THEN 60.0 END),0) AS quality_score " +
+    "FROM users u LEFT JOIN task_instances t ON t.assigned_to = u.id AND t.due_date >= $1::date AND t.due_date <= $2::date " +
+    "WHERE u.role = 'cleaner'" + cleanerFilter +
+    " GROUP BY u.id, u.full_name, u.username",
+    values,
+  );
+  const data = result.rows.map((row) => {
+    const completed = Number(row.completed_approved || 0);
+    const onTime = Number(row.tasks_completed_on_time || 0);
+    const quality = Math.round(Number(row.quality_score || 0));
+    return {
+      profile_id: row.profile_id,
+      cleaner_name: row.cleaner_name,
+      username: row.username,
+      tasks_assigned: Number(row.tasks_assigned || 0),
+      tasks_completed_on_time: onTime,
+      tasks_late: Number(row.tasks_late || 0),
+      tasks_reworked: Number(row.tasks_reworked || 0),
+      tasks_rejected: Number(row.tasks_rejected || 0),
+      compliance_rate: completed > 0 ? Math.round((onTime / completed) * 100) : 0,
+      avg_execution_time_minutes: Math.round(Number(row.avg_execution_time_minutes || 0) * 10) / 10,
+      quality_score: quality,
+      supervisor_rating: quality > 0 ? (quality >= 90 ? 4.9 : quality >= 80 ? 4.5 : 3.8) : 0,
+    };
+  }).sort((a, b) =>
+    b.quality_score - a.quality_score ||
+    b.compliance_rate - a.compliance_rate ||
+    b.tasks_completed_on_time - a.tasks_completed_on_time
+  );
+  res.json({ data, meta: { startDate, endDate } });
+}));
+
 app.get("/api/kpi-snapshots", requireAuth, asyncRoute(async (req, res) => {
   const requestedProfile = typeof req.query.profileId === "string" ? req.query.profileId : null;
   const profileId = req.auth?.role === "cleaner" ? req.auth.id : requestedProfile;

@@ -28,7 +28,7 @@ async function main(): Promise<void> {
     const found = new Set(result.rows.map((row) => row.table_name));
     const missing = required.filter((table) => !found.has(table));
     if (missing.length) throw new Error("Schema migration incomplete: " + missing.join(", "));
-    process.stdout.write("Naris Ops PostgreSQL schema applied and verified.\\n");
+    process.stdout.write("Naris Ops PostgreSQL schema applied and verified.\n");
   } finally {
     await pool.end();
   }
@@ -36,6 +36,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   process.stderr.write("Naris schema migration failed: " +
-    (error instanceof Error ? error.message : "unknown error") + "\\n");
+    (error instanceof Error ? error.message : "unknown error") + "\n");
   process.exitCode = 1;
 });

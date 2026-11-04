@@ -7,21 +7,41 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: naris_ops
-      POSTGRES_USER: ${NARIS_DB_USER:?Set NARIS_DB_USER in .env.naris}
-      POSTGRES_PASSWORD: ${NARIS_DB_PASSWORD:?Set NARIS_DB_PASSWORD in .env.naris}
+      POSTGRES_USER: ${NARIS_DB_ADMIN_USER:?Set NARIS_DB_ADMIN_USER in .env.naris}
+      POSTGRES_PASSWORD: ${NARIS_DB_ADMIN_PASSWORD:?Set NARIS_DB_ADMIN_PASSWORD in .env.naris}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - naris_ops_pg_data:/var/lib/postgresql/data
     networks:
       - naris-private
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${NARIS_DB_USER} -d naris_ops"]
+      test: ["CMD-SHELL", "pg_isready -U ${NARIS_DB_ADMIN_USER} -d naris_ops"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
     security_opt:
       - no-new-privileges:true
+
+  naris-db-bootstrap:
+    image: postgres:17-alpine
+    container_name: naris-db-bootstrap
+    restart: "no"
+    env_file:
+      - .env.naris
+    volumes:
+      - ./db/init-app-role.sql:/bootstrap/init-app-role.sql:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PGPASSWORD="$NARIS_DB_ADMIN_PASSWORD"
+        until pg_isready -h naris-postgres -U "$NARIS_DB_ADMIN_USER" -d naris_ops; do sleep 2; done
+        psql -h naris-postgres -U "$NARIS_DB_ADMIN_USER" -d naris_ops -v ON_ERROR_STOP=1 -v app_user="$NARIS_DB_USER" -v app_password="$NARIS_DB_PASSWORD" -f /bootstrap/init-app-role.sql
+    depends_on:
+      naris-postgres:
+        condition: service_healthy
+    networks:
+      - naris-private
 
   naris-migrate:
     build:
@@ -37,8 +57,8 @@ services:
       PG_SSL: "false"
     command: ["npm", "run", "db:migrate"]
     depends_on:
-      naris-postgres:
-        condition: service_healthy
+      naris-db-bootstrap:
+        condition: service_completed_successfully
     networks:
       - naris-private
 

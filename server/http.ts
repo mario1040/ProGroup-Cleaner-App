@@ -1501,6 +1501,44 @@ app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {
   if (!response.ok || (payload.result !== "ok" && payload.result !== "not found")) {
     res.status(502).json({ error: payload.error?.message || "Cloudinary media deletion failed" }); return;
   }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT raw_data FROM task_instances WHERE id = $1 FOR UPDATE",
+      [taskId],
+    );
+    if (selected.rowCount === 1) {
+      const raw = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
+        ? { ...selected.rows[0].raw_data as Record<string, unknown> } : {};
+      for (const side of ["before", "after"] as const) {
+        const prefix = side === "before" ? "photo_before" : "photo_after";
+        if (raw[prefix + "_public_id"] === publicId) {
+          for (const suffix of ["_url", "_public_id", "_taken_at", "_uploaded_at", "_size", "_mime_type"]) {
+            delete raw[prefix + suffix];
+          }
+          const photos = raw.photos && typeof raw.photos === "object"
+            ? { ...raw.photos as Record<string, unknown> } : null;
+          if (photos) {
+            delete photos[side];
+            delete photos[side + "_url"];
+            raw.photos = photos;
+          }
+        }
+      }
+      await client.query(
+        "UPDATE task_instances SET raw_data = $2::jsonb, updated_at = NOW() WHERE id = $1",
+        [taskId, JSON.stringify(raw)],
+      );
+    }
+    await client.query("DELETE FROM task_media WHERE task_id = $1 AND public_id = $2", [taskId, publicId]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
   res.json({ success: true, result: payload.result });
 }));
 

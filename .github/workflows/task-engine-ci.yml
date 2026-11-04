@@ -50,6 +50,17 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --legacy-peer-deps --no-audit --no-fund
+      - name: Bootstrap least-privilege PostgreSQL role
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/db/init-app-role.sql:/bootstrap/init-app-role.sql:ro" \
+            -e PGPASSWORD=ci-only-password postgres:17-alpine sh -ec '
+              psql -h 127.0.0.1 -U naris_test -d naris_ops -v ON_ERROR_STOP=1 \
+                -v app_user=naris_app_ci \
+                -v app_password=ci_app_password_hex_0123456789abcdef \
+                -f /bootstrap/init-app-role.sql
+            '
+          echo "DATABASE_URL=postgresql://naris_app_ci:ci_app_password_hex_0123456789abcdef@localhost:5432/naris_ops" >> "$GITHUB_ENV"
       - name: Apply PostgreSQL migration
         run: npx tsx server/db/migrate.ts
       - name: Verify PostgreSQL schema

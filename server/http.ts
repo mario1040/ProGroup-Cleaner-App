@@ -1596,7 +1596,11 @@ async function start(): Promise<void> {
   process.once("SIGTERM", () => shutdown("SIGTERM"));
   process.once("SIGINT", () => shutdown("SIGINT"));
 }
-start().catch((error: unknown) => {
-  console.error("API startup failed:", error instanceof Error ? error.message : "unknown error");
-  process.exitCode = 1;
-});
+export { app, pool };
+
+if (process.env.NODE_ENV !== "test") {
+  start().catch((error: unknown) => {
+    console.error("API startup failed:", error instanceof Error ? error.message : "unknown error");
+    process.exitCode = 1;
+  });
+}

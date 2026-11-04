@@ -1022,7 +1022,7 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
   const legacy = await pool.query<{ sop_orphans: number; template_orphans: number; base64_photos: number }>(
     "SELECT " +
     "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.sop_item_id WHERE t.sop_item_id IS NOT NULL AND s.id IS NULL) AS sop_orphans, " +
-    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN task_templates tt ON tt.id = t.template_id WHERE t.template_id IS NOT NULL AND tt.id IS NULL) AS template_orphans, " +
+    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN task_templates tt ON tt.id = t.template_id LEFT JOIN sop_items s ON s.id = t.template_id WHERE t.template_id IS NOT NULL AND tt.id IS NULL AND s.id IS NULL) AS template_orphans, " +
     "(SELECT COUNT(*)::int FROM task_instances t WHERE t.raw_data::text LIKE '%data:image/%') AS base64_photos",
   );
   const legacyRow = legacy.rows[0];

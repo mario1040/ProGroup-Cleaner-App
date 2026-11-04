@@ -19,6 +19,22 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: naris_ops
+          POSTGRES_USER: naris_test
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U naris_test -d naris_ops"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://naris_test:ci-only-password@localhost:5432/naris_ops
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +44,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --legacy-peer-deps --no-audit --no-fund
+      - name: Apply and verify PostgreSQL schema
+        run: npx tsx server/db/schema-smoke.ts
       - name: Run task-engine tests
         run: npx vitest run server
       - name: TypeScript check

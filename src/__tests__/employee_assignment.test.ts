@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { 
-  isEligibleCleaner, 
-  getEligibleCleaners, 
-  selectFlexibleAssignee 
-} from '../lib/api';
+import { isEligibleCleaner, getEligibleCleaners } from '../lib/api-postgres';
+import { selectFlexibleAssignee } from '../lib/task-utils';
 import { Profile, TaskInstance, SOPItem, Zone } from '../types';
 
 describe('Naris Ops Strict Employee Status & Assignment Hardening Suite', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getTaskPhotoUrls, normalizeTaskPhotoUrls } from "../lib/api";
+import { getTaskPhotoUrls, normalizeTaskPhotoUrls } from "../lib/api-postgres";
 import { TaskInstance } from "../types";
 
 const baseTask: TaskInstance = {

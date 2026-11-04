@@ -12,16 +12,21 @@ function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function findDataUri(raw: JsonRecord, keys: readonly string[], nestedKeys: readonly string[]): string | null {
+  const candidates: string[] = [];
   for (const key of keys) {
     const value = raw[key];
-    if (typeof value === "string" && value.startsWith("data:image/")) return value;
+    if (typeof value === "string" && value.startsWith("data:image/")) candidates.push(value);
   }
   const photos = isRecord(raw.photos) ? raw.photos : {};
   for (const key of nestedKeys) {
     const value = photos[key];
-    if (typeof value === "string" && value.startsWith("data:image/")) return value;
+    if (typeof value === "string" && value.startsWith("data:image/")) candidates.push(value);
   }
-  return null;
+  const unique = [...new Set(candidates)];
+  if (unique.length > 1) {
+    throw new Error("Multiple distinct Base64 images exist for one photo side; manual reconciliation is required.");
+  }
+  return unique[0] || null;
 }
 function replaceDataUris(raw: JsonRecord, keys: readonly string[], nestedKeys: readonly string[], url: string): void {
   for (const key of keys) {

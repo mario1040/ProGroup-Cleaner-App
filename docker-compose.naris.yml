@@ -122,7 +122,6 @@ networks:
   naris-private:
     name: naris-private
     driver: bridge
-    internal: true
 
 volumes:
   naris_ops_pg_data:

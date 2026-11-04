@@ -223,3 +223,23 @@ CREATE INDEX IF NOT EXISTS task_templates_zone_active_idx
   ON task_templates (zone_id, is_active);
 CREATE INDEX IF NOT EXISTS task_templates_code_idx
   ON task_templates (task_code);
+
+
+-- Relational metadata for media objects stored outside PostgreSQL (Cloudinary).
+CREATE TABLE IF NOT EXISTS task_media (
+  task_id TEXT NOT NULL,
+  side TEXT NOT NULL CHECK (side IN ('before', 'after')),
+  storage_provider TEXT NOT NULL CHECK (storage_provider IN ('cloudinary', 'legacy_external')),
+  public_id TEXT,
+  secure_url TEXT NOT NULL,
+  mime_type TEXT,
+  byte_size BIGINT CHECK (byte_size IS NULL OR byte_size >= 0),
+  captured_at TIMESTAMPTZ,
+  uploaded_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (task_id, side)
+);
+CREATE INDEX IF NOT EXISTS task_media_public_id_idx
+  ON task_media (public_id) WHERE public_id IS NOT NULL;

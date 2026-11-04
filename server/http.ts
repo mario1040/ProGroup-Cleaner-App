@@ -413,6 +413,93 @@ app.patch("/api/users/:id", requireAuth, allowRoles("admin"), asyncRoute(async (
   }
 }));
 
+app.post("/api/users/:id/reassign-pending", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const inactive = await client.query(
+      "SELECT id, role, is_active FROM users WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
+    if (inactive.rowCount !== 1 || inactive.rows[0].role !== "cleaner" || inactive.rows[0].is_active === true) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "The selected account must be an inactive cleaner" }); return;
+    }
+    const pending = await client.query(
+      "SELECT id, raw_data, assigned_to, assigned_by, due_date, due_time, status " +
+      "FROM task_instances WHERE assigned_to = $1 AND status = 'pending' " +
+      "ORDER BY due_date, due_time NULLS LAST, id FOR UPDATE",
+      [req.params.id],
+    );
+    if (pending.rowCount === 0) {
+      await client.query("COMMIT");
+      res.json({ updated: 0, skipped: 0 }); return;
+    }
+    const cleaners = await client.query(
+      "SELECT id FROM users WHERE role = 'cleaner' AND is_active = TRUE ORDER BY id",
+    );
+    if (cleaners.rowCount === 0) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "No active cleaners are available for reassignment" }); return;
+    }
+    const cleanerIds = cleaners.rows.map((row) => String(row.id));
+    const dates = [...new Set(pending.rows.map((row) => String(row.due_date).slice(0, 10)))];
+    const workload = new Map<string, Map<string, number>>();
+    for (const date of dates) {
+      const counts = await client.query(
+        "SELECT assigned_to, COUNT(*)::int AS task_count FROM task_instances " +
+        "WHERE due_date = $1::date GROUP BY assigned_to",
+        [date],
+      );
+      const day = new Map<string, number>();
+      for (const row of counts.rows) day.set(String(row.assigned_to), Number(row.task_count));
+      workload.set(date, day);
+    }
+    const now = new Date().toISOString();
+    for (const row of pending.rows) {
+      const date = String(row.due_date).slice(0, 10);
+      const day = workload.get(date) || new Map<string, number>();
+      const selected = [...cleanerIds].sort((left, right) =>
+        (day.get(left) || 0) - (day.get(right) || 0) || left.localeCompare(right)
+      )[0];
+      const task = {
+        ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+        id: row.id,
+        assigned_to: selected,
+        assigned_by: "p1",
+        updated_at: now,
+      };
+      await client.query(
+        "UPDATE task_instances SET assigned_to = $2, assigned_by = $3, raw_data = $4::jsonb, " +
+        "updated_at = $5::timestamptz WHERE id = $1",
+        [row.id, selected, "p1", JSON.stringify(task), now],
+      );
+      day.set(selected, (day.get(selected) || 0) + 1);
+      workload.set(date, day);
+      const auditId = "audit_" + randomBytes(12).toString("hex");
+      await client.query(
+        "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+        "VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::timestamptz)",
+        [auditId, row.id, "task_reassigned",
+          JSON.stringify({
+            changed_fields: ["assigned_to", "assigned_by"],
+            assigned_to_before: req.params.id,
+            assigned_to_after: selected,
+            actor_id: req.auth?.id,
+          }),
+          JSON.stringify({ id: auditId, task_id: row.id, action: "task_reassigned", created_at: now }), now],
+      );
+    }
+    await client.query("COMMIT");
+    res.json({ updated: pending.rowCount, skipped: 0 });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.get("/api/zones", requireAuth, asyncRoute(async (_req, res) => {
   const result = await pool.query("SELECT id, location_id, name, responsible_employee_id, raw_data FROM zones ORDER BY id");
   res.json({ data: result.rows.map((row) => ({

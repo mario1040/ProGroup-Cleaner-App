@@ -1616,7 +1616,27 @@ async function start(): Promise<void> {
   const server = app.listen(PORT, "0.0.0.0", () => {
     process.stdout.write("Naris Ops API listening on port " + PORT + "\n");
   });
+  let scheduler: ReturnType<typeof setInterval> | undefined;
+  if (process.env.TASK_GENERATION_ENABLED === "true") {
+    let schedulerRunning = false;
+    const runScheduler = async () => {
+      if (schedulerRunning) return;
+      schedulerRunning = true;
+      try {
+        await ensureDailyTasks(businessDate());
+      } catch (error) {
+        console.error("[Task generator] Daily generation attempt failed:", error instanceof Error ? error.message : "unknown error");
+      } finally {
+        schedulerRunning = false;
+      }
+    };
+    void runScheduler();
+    scheduler = setInterval(() => void runScheduler(), 60_000);
+  } else {
+    process.stdout.write("Daily task generation is disabled; enable it after data import.\\n");
+  }
   const shutdown = (signal: string) => {
+    if (scheduler) clearInterval(scheduler);
     process.stdout.write(signal + " received; shutting down API.\n");
     server.close(() => {
       void pool.end().finally(() => process.exit(0));

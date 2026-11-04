@@ -51,6 +51,7 @@ Start the API after setting server-only environment variables:
 DATABASE_URL=postgresql://APP_USER:APP_PASSWORD@POSTGRES_HOST:5432/naris_ops
 API_PORT=4000
 PG_POOL_MAX=10
+TASK_GENERATION_ENABLED=false
 PG_SSL=false
 APP_TIME_ZONE=Africa/Cairo
 APP_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -79,7 +80,7 @@ The API uses opaque random session tokens; only token hashes are stored in Postg
 
 The generator uses the same recurrence and assignment policy as the existing app: active SOPs only; configured scheduled times; Arabic weekday recurrence; default SOP assignee, then zone responsible employee, then least-loaded active cleaner. It intentionally does not add shift/work-day filtering that the source implementation did not have.
 
-The API process checks the current business date at startup and every 60 seconds. It generates the day's recurring tasks once a successful run exists. Generation uses a transaction, a per-date advisory lock, deterministic task IDs, and a uniqueness index to protect against duplicate tasks across concurrent API instances. Failed runs are logged and retried on a later check.
+Automatic generation is opt-in and stays disabled unless `TASK_GENERATION_ENABLED=true`. This prevents an empty database from recording a successful zero-task run before the Firestore import. After import and same-date reconciliation, enable the flag; the API then checks the current business date at startup and every 60 seconds. It generates the day's recurring tasks once a successful run exists. Generation uses a transaction, a per-date advisory lock, deterministic task IDs, and a uniqueness index to protect against duplicate tasks across concurrent API instances. Failed runs are logged and retried on a later check.
 
 Manual one-off generation remains available:
 
@@ -124,3 +125,51 @@ npm run build
 10. Route production traffic only after sign-off. Keep Firebase intact and available for rollback until the agreed observation period ends.
 
 This branch and CI do not create a database on the user's Windows/Docker host, deploy containers, configure DNS/TLS, or perform production cutover. Those steps are deliberately deferred until the code and data validation are approved.
+
+## Isolated Docker deployment (Windows / Docker Desktop)
+
+The repository includes `docker-compose.naris.yml`. It creates a separate PostgreSQL 17 container, named volume, isolated bridge network, bootstrap-only database admin, least-privilege runtime role, API, and Nginx frontend. It does not join or modify the existing marketing or Evolution PostgreSQL containers. PostgreSQL has no published host port; only the web UI is published on port 8081 by default.
+
+1. Copy `.env.naris.example` to `.env.naris` and edit it locally. Set two different long hexadecimal passwords: `NARIS_DB_ADMIN_PASSWORD` for the bootstrap-only superuser and `NARIS_DB_PASSWORD` for the least-privilege runtime account. Do not commit or share this file. Add the final public website origin to `APP_ALLOWED_ORIGINS`.
+2. Keep `TASK_GENERATION_ENABLED=false` during initial provisioning and import.
+3. Put the decrypted Firestore REST backup folder at repository root as `naris_ops_firestore_backup`. Do not commit it.
+4. Start the isolated database and apply schema:
+
+```powershell
+Copy-Item .env.naris.example .env.naris
+notepad .env.naris
+docker compose --env-file .env.naris -f docker-compose.naris.yml up -d naris-postgres naris-migrate
+```
+
+5. Run the import dry-run (the backup folder must exist locally):
+
+```powershell
+docker compose --env-file .env.naris -f docker-compose.naris.yml --profile import run --rm naris-import
+```
+
+6. Only after reviewing the dry-run report, run the actual import:
+
+```powershell
+docker compose --env-file .env.naris -f docker-compose.naris.yml --profile import run --rm naris-import npm run data:import-firestore -- --backup-dir /backup
+```
+
+7. Start the API and web UI:
+
+```powershell
+docker compose --env-file .env.naris -f docker-compose.naris.yml up -d naris-api naris-web
+docker compose --env-file .env.naris -f docker-compose.naris.yml ps
+```
+
+Open `http://localhost:8081` for local acceptance testing. To inspect the database without publishing its port:
+
+```powershell
+docker exec -it naris-postgres sh -lc 'psql -U "$POSTGRES_USER" -d naris_ops'
+```
+
+After the imported data has been reconciled against Firestore and daily task generation has been checked for the same dates, change `TASK_GENERATION_ENABLED=true` in `.env.naris` and recreate only the API:
+
+```powershell
+docker compose --env-file .env.naris -f docker-compose.naris.yml up -d --force-recreate naris-api
+```
+
+For production, replace the example origin with the exact HTTPS origin and configure the existing reverse proxy/Cloudflare Tunnel to forward to host port 8081. Do not expose PostgreSQL publicly. This stack is isolated by its own named volume and network; it does not require the existing PostgreSQL containers to be stopped.

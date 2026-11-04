@@ -5,8 +5,14 @@ on:
     branches: [main]
     paths:
       - "server/**"
+      - "db/**"
       - "package.json"
       - "tsconfig.json"
+      - "Dockerfile"
+      - "docker-compose.naris.yml"
+      - "nginx/**"
+      - ".env.naris.example"
+      - ".dockerignore"
       - ".github/workflows/task-engine-ci.yml"
   push:
     branches: [feat/postgres-task-engine]
@@ -44,7 +50,20 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --legacy-peer-deps --no-audit --no-fund
-      - name: Apply and verify PostgreSQL schema
+      - name: Bootstrap least-privilege PostgreSQL role
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/db/init-app-role.sql:/bootstrap/init-app-role.sql:ro" \
+            -e PGPASSWORD=ci-only-password postgres:17-alpine sh -ec '
+              psql -h 127.0.0.1 -U naris_test -d naris_ops -v ON_ERROR_STOP=1 \
+                -v app_user=naris_app_ci \
+                -v app_password=ci_app_password_hex_0123456789abcdef \
+                -f /bootstrap/init-app-role.sql
+            '
+          echo "DATABASE_URL=postgresql://naris_app_ci:ci_app_password_hex_0123456789abcdef@localhost:5432/naris_ops" >> "$GITHUB_ENV"
+      - name: Apply PostgreSQL migration
+        run: npx tsx server/db/migrate.ts
+      - name: Verify PostgreSQL schema
         run: npx tsx server/db/schema-smoke.ts
       - name: Run task-engine tests
         run: npx vitest run server
@@ -52,3 +71,11 @@ jobs:
         run: npm run lint
       - name: Frontend production build
         run: npm run build
+      - name: Validate isolated Compose configuration
+        run: |
+          printf "%s\\n" "NARIS_DB_ADMIN_USER=naris_admin" "NARIS_DB_ADMIN_PASSWORD=ci_admin_0123456789abcdef0123456789abcdef0123456789abcdef" "NARIS_DB_USER=naris_ci" "NARIS_DB_PASSWORD=ci_app_0123456789abcdef0123456789abcdef0123456789abcdef" "NARIS_WEB_PORT=8081" "APP_ALLOWED_ORIGINS=http://localhost:8081" > .env.naris
+          docker compose --env-file .env.naris -f docker-compose.naris.yml config -q
+      - name: Build API container image
+        run: docker build --target api -t naris-api:ci .
+      - name: Build frontend container image
+        run: docker build --target web -t naris-web:ci .

@@ -1,3 +1,5 @@
+> **Historical baseline note (2026-11-04):** Sections below originally recorded the pre-cutover state before PR #5 and PR #6. The current, superseding status and remaining acceptance gates are documented in the "Superseding parity review" section at the end. Do not treat older statements about the active Firebase frontend as current.
+
 # Naris Ops migration audit — 2026-11-04
 
 ## Executive status
@@ -139,3 +141,62 @@ The branch now also includes:
 CI run `41803408830` for commit `6b5ae191e95e47b72325662a7ad2c04e1cad044f` completed successfully: server tests, TypeScript check and frontend production build all passed.
 
 These additions do **not** complete the migration. The frontend still calls Firebase; task mutations and lifecycle routes are not implemented; API integration tests and restore/parity tests remain absent. Keep the PR draft and Firebase active.
+
+
+## Superseding parity review — 2026-11-04
+
+### Current repository state after PR #5 and PR #6
+- The active frontend entry point and all reviewed data-using components import `src/lib/api-postgres.ts`.
+- The Firebase SDK dependency, Firebase client adapter, client initializer, quota manager, Firebase app config, Firestore/Storage rules, indexes and Firebase deployment config were removed from the active repository.
+- Repository source scan found only `server/import-firestore-backup.ts` under Firebase/Firestore-named paths. It is a one-time offline importer for an exported backup; it does not connect to Firebase.
+- `firestore_documents` is a PostgreSQL archive of imported source documents, not a live Firebase connection.
+- The actual deployed application has not been verified from this GitHub-only review. Deployment and live DB checks remain separate acceptance gates.
+
+### Source collection to PostgreSQL mapping
+| Source collection | PostgreSQL operational table | Status |
+|---|---|---|
+| users | users | Implemented; password records stored separately |
+| locations | locations | Implemented |
+| zones | zones | Implemented |
+| sop_items | sop_items | Implemented; recurring scheduler reads this table |
+| task_templates | task_templates | Added in PR #7; targeted importer support included |
+| task_instances | task_instances | Implemented; task lifecycle and metadata stored in JSONB plus indexed columns |
+| operational_tasks | operational_tasks | Implemented; read API |
+| device_switches | device_switches | Implemented; read API |
+| kpi_snapshots | kpi_snapshots | Implemented; read API |
+| audit_logs | audit_logs | Implemented; write audit events and read API |
+
+Additional PostgreSQL-owned entities:
+- `auth_sessions` replaces browser session handling; `users.password_record` authenticates the imported application accounts.
+- `task_media` (PR #7) stores relational metadata for task photos; the actual image objects remain in Cloudinary, not PostgreSQL.
+- `inventory_items` is a new PostgreSQL-backed feature, not one of the ten collections in the source backup.
+- `firestore_documents` retains source JSON and document paths for audit/rollback.
+
+### PR #7 parity work
+PR #7 adds:
+- A distinct `task_templates` table and CRUD API; it is no longer aliased to `sop_items`.
+- Importer support for normalizing `task_templates`, and `--only-collection` to import that collection without overwriting active task records.
+- Preservation of an existing PostgreSQL password record when a source backup is re-imported.
+- `task_media` metadata persistence for task photo URLs, Cloudinary public IDs, MIME types, sizes and capture/upload timestamps.
+- Authenticated server-side Cloudinary deletion; API secrets are server-only.
+- A resumable, dry-run-first media reconciliation command that uploads Base64 and non-Cloudinary task photo URLs to Cloudinary and indexes their metadata.
+- A validation endpoint that compares each source archive collection count with its normalized table count and reports missing normalized records. Extra rows created by the application after migration are allowed.
+
+### Remaining gaps — do not declare Firebase retired yet
+1. **The current REST backup is top-level only.** Firestore subcollections are not proven exported or reconciled.
+2. **Firebase Auth is not proven reconciled.** The backup includes five application user records with salted password hashes, but does not prove every Firebase Auth identity, UID, provider, disabled state or identity mapping was included. Validate the source Auth user list separately.
+3. **Firebase Storage is not proven fully inventoried.** The backup audit counted 384 Base64 photo-field appearances (not unique files). The new Cloudinary migration script has not been run against the live database, and unreferenced Storage objects are not covered by task-field migration.
+4. **Other image fields** (for example user avatars, zone cover images, template guide/reference images and signatures) need a source-side inventory and URL/provider reconciliation; task photo migration alone is not proof for every Storage object.
+5. **The ten collection parity check** requires the source archive to be present in `firestore_documents` and the targeted `task_templates` import to have run. It is not a substitute for field-level comparison or subcollection/Auth/Storage inventory.
+6. **Task engine parity and scheduler cutover** remain disabled until same-date plan, assignment and existing-task-state reconciliation is accepted. Keep `TASK_GENERATION_ENABLED=false`.
+7. **Live deployment** still requires migration, importer, readiness, login, task lifecycle, photo, approvals, KPI, audit, inventory persistence, backup/restore and rollback tests on the actual Naris server.
+
+### Safe next operations after PR #7 is merged
+1. Back up the current `naris_ops` database and confirm the Firestore backup directory is present.
+2. Run a dry-run of the targeted `task_templates` import, then apply only that collection. Do not re-import all task collections over live operational data.
+3. Run the Cloudinary media migration in dry-run mode; review the number of Base64 and Firebase Storage URLs. Configure the server-side Cloudinary upload preset before applying.
+4. Apply media migration in a controlled window and rerun it to confirm `remaining_base64_tasks=0` and `remaining_firebase_url_tasks=0` for task photo fields.
+5. Run `/api/system/validation` and resolve every error; inspect warnings for unmatched legacy SOP/template references and media.
+6. Complete source-side Firebase Auth, subcollection and Storage inventory, then perform user acceptance and rollback drills before retiring the Firebase project.
+
+**Current decision:** The application code has been switched away from Firebase, but full data/service parity and live production cutover are not yet evidenced. Keep the Firebase project available read-only/rollback-ready until all remaining gates pass.

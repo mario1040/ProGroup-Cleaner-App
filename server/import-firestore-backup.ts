@@ -109,6 +109,10 @@ function validateNormalizedDocument(
     throw new Error("A location record is missing its name.");
   } else if (collectionName === "zones" && !asString(data.name)) {
     throw new Error("A zone record is missing its name.");
+  } else if (collectionName === "task_templates") {
+    if (!asString(data.title) || !asString(data.zone_id) || !asString(data.task_code)) {
+      throw new Error("A task template is missing its title, zone or task code.");
+    }
   } else if (collectionName === "sop_items") {
     if (!asString(data.title) || !asString(data.zone_id) || !asString(data.frequency)) {
       throw new Error("An SOP record is missing required scheduling fields.");
@@ -159,6 +163,37 @@ async function insertGenericDocument(
   );
 }
 
+async function upsertImportedTaskMedia(
+  client: PoolClient,
+  taskId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const photos = isRecord(data.photos) ? data.photos : {};
+  for (const side of ["before", "after"] as const) {
+    const prefix = side === "before" ? "photo_before" : "photo_after";
+    const urlCandidates = side === "before"
+      ? [data.photo_before_url, photos.before, photos.before_url, data.before_photo_url, data.before_photo, data.photoBefore]
+      : [data.photo_after_url, photos.after, photos.after_url, data.after_photo_url, data.after_photo, data.photoAfter];
+    const secureUrl = urlCandidates.find((value): value is string =>
+      typeof value === "string" && value.startsWith("https://"));
+    if (!secureUrl) continue;
+    const publicId = asString(data[prefix + "_public_id"]);
+    const provider = secureUrl.includes("res.cloudinary.com") ? "cloudinary" : "legacy_external";
+    await client.query(
+      "INSERT INTO task_media (task_id, side, storage_provider, public_id, secure_url, mime_type, byte_size, captured_at, uploaded_at, metadata) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz,$10::jsonb) " +
+      "ON CONFLICT (task_id, side) DO UPDATE SET storage_provider = EXCLUDED.storage_provider, " +
+      "public_id = COALESCE(EXCLUDED.public_id, task_media.public_id), secure_url = EXCLUDED.secure_url, " +
+      "mime_type = EXCLUDED.mime_type, byte_size = EXCLUDED.byte_size, captured_at = EXCLUDED.captured_at, " +
+      "uploaded_at = EXCLUDED.uploaded_at, metadata = EXCLUDED.metadata, updated_at = NOW()",
+      [taskId, side, provider, publicId, secureUrl,
+        asString(data[prefix + "_mime_type"]), typeof data[prefix + "_size"] === "number" ? data[prefix + "_size"] : null,
+        asDate(data[prefix + "_taken_at"]), asDate(data[prefix + "_uploaded_at"]),
+        JSON.stringify({ imported_from: "task_instances", legacy_side: side })],
+    );
+  }
+}
+
 async function insertNormalizedDocument(
   client: PoolClient,
   collectionName: string,
@@ -175,7 +210,7 @@ async function insertNormalizedDocument(
         "ON CONFLICT (id) DO UPDATE SET username = EXCLUDED.username, " +
         "full_name = EXCLUDED.full_name, phone = EXCLUDED.phone, role = EXCLUDED.role, " +
         "is_active = EXCLUDED.is_active, " +
-        "password_record = COALESCE(EXCLUDED.password_record, users.password_record), " +
+        "password_record = COALESCE(users.password_record, EXCLUDED.password_record), " +
         "raw_data = EXCLUDED.raw_data, updated_at = EXCLUDED.updated_at",
       [
         id, asString(data.username), asString(data.full_name), asString(data.phone), asString(data.role),
@@ -207,6 +242,20 @@ async function insertNormalizedDocument(
         id, asString(data.location_id), asString(data.name),
         asString(data.responsible_employee_id), JSON.stringify(safeData),
       ],
+    );
+    return;
+  }
+
+  if (collectionName === "task_templates") {
+    await client.query(
+      "INSERT INTO task_templates (id, zone_id, task_code, title, category, is_active, raw_data, created_at, updated_at) " +
+        "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz) " +
+        "ON CONFLICT (id) DO UPDATE SET zone_id = EXCLUDED.zone_id, task_code = EXCLUDED.task_code, " +
+        "title = EXCLUDED.title, category = EXCLUDED.category, is_active = EXCLUDED.is_active, " +
+        "raw_data = EXCLUDED.raw_data, updated_at = EXCLUDED.updated_at",
+      [id, asString(data.zone_id), asString(data.task_code), asString(data.title),
+        asString(data.category), asBoolean(data.is_active, true), JSON.stringify(safeData),
+        asDate(data.created_at), asDate(data.updated_at)],
     );
     return;
   }
@@ -256,6 +305,7 @@ async function insertNormalizedDocument(
         JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
       ],
     );
+    await upsertImportedTaskMedia(client, id, data);
     return;
   }
 
@@ -331,12 +381,20 @@ async function main(): Promise<void> {
   }
 
   const collectionEntries = await readdir(backupDir, { withFileTypes: true });
-  const collections = collectionEntries
+  const allCollections = collectionEntries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
+  const onlyCollectionIndex = args.indexOf("--only-collection");
+  const onlyCollection = onlyCollectionIndex >= 0 ? args[onlyCollectionIndex + 1] : "";
+  if (onlyCollectionIndex >= 0 && (!onlyCollection || onlyCollection.startsWith("--"))) {
+    throw new Error("Pass a collection name after --only-collection.");
+  }
+  const collections = onlyCollection ? allCollections.filter((name) => name === onlyCollection) : allCollections;
   if (collections.length === 0) {
-    throw new Error("No collection folders were found in the backup directory.");
+    throw new Error(onlyCollection
+      ? "The requested collection folder was not found: " + onlyCollection
+      : "No collection folders were found in the backup directory.");
   }
   const connectionString = dryRun ? undefined : assertNarisDatabaseUrl(process.env.DATABASE_URL);
   const pool = dryRun ? null : new Pool({ connectionString });

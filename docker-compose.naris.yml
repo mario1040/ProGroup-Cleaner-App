@@ -84,6 +84,27 @@ services:
     networks:
       - naris-private
 
+  naris-media-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: naris-media-migrate
+    profiles: ["media-migration"]
+    restart: "no"
+    env_file:
+      - .env.naris
+    environment:
+      DATABASE_URL: postgresql://${NARIS_DB_USER}:${NARIS_DB_PASSWORD}@naris-postgres:5432/naris_ops
+      PG_SSL: "false"
+    entrypoint: ["npm", "run", "media:migrate-cloudinary", "--"]
+    command: ["--dry-run"]
+    depends_on:
+      naris-migrate:
+        condition: service_completed_successfully
+    networks:
+      - naris-private
+
   naris-api:
     build:
       context: .

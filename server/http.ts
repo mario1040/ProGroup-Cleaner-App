@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { assertNarisDatabaseUrl } from "./db/connection";
 import { applyTaskUpdate, type TaskRecord } from "./task-rules";
 import { generateRecurringTasksForDate } from "./task-generator";
@@ -155,6 +155,32 @@ function dateOnly(value: unknown): string {
   return "";
 }
 
+async function upsertTaskMediaRecord(
+  client: PoolClient,
+  taskId: string,
+  task: Record<string, unknown>,
+  side: "before" | "after",
+): Promise<void> {
+  const prefix = side === "before" ? "photo_before" : "photo_after";
+  const secureUrl = task[prefix + "_url"];
+  if (typeof secureUrl !== "string" || !secureUrl.startsWith("https://")) return;
+  const publicId = typeof task[prefix + "_public_id"] === "string" ? task[prefix + "_public_id"] : null;
+  const provider = secureUrl.includes("res.cloudinary.com") ? "cloudinary" : "legacy_external";
+  const byteSize = task[prefix + "_size"];
+  await client.query(
+    "INSERT INTO task_media (task_id, side, storage_provider, public_id, secure_url, mime_type, byte_size, captured_at, uploaded_at, metadata) " +
+    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz,$10::jsonb) " +
+    "ON CONFLICT (task_id, side) DO UPDATE SET storage_provider = EXCLUDED.storage_provider, " +
+    "public_id = COALESCE(EXCLUDED.public_id, task_media.public_id), secure_url = EXCLUDED.secure_url, " +
+    "mime_type = EXCLUDED.mime_type, byte_size = EXCLUDED.byte_size, captured_at = EXCLUDED.captured_at, " +
+    "uploaded_at = EXCLUDED.uploaded_at, metadata = EXCLUDED.metadata, updated_at = NOW()",
+    [taskId, side, provider, publicId, secureUrl, task[prefix + "_mime_type"] || null,
+      Number.isSafeInteger(byteSize) ? byteSize : null,
+      task[prefix + "_taken_at"] || null, task[prefix + "_uploaded_at"] || null,
+      JSON.stringify({ source: "task_update", side })],
+  );
+}
+
 function isValidDateOnly(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(value + "T00:00:00.000Z");
@@ -265,7 +291,9 @@ app.get("/health/ready", asyncRoute(async (_req, res) => {
       "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
       "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
       "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
+      "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
       "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
+      "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
       "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
       "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
       "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
@@ -911,7 +939,9 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     ["locations", "SELECT COUNT(*)::int AS count FROM locations"],
     ["zones", "SELECT COUNT(*)::int AS count FROM zones"],
     ["sop_items", "SELECT COUNT(*)::int AS count FROM sop_items"],
+    ["task_templates", "SELECT COUNT(*)::int AS count FROM task_templates"],
     ["task_instances", "SELECT COUNT(*)::int AS count FROM task_instances"],
+    ["task_media", "SELECT COUNT(*)::int AS count FROM task_media"],
     ["operational_tasks", "SELECT COUNT(*)::int AS count FROM operational_tasks"],
     ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches"],
     ["kpi_snapshots", "SELECT COUNT(*)::int AS count FROM kpi_snapshots"],
@@ -934,6 +964,38 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
       failedDocs: 0, errors: [], warnings: [],
     });
   }
+  const sourceMappings = [
+    ["users", "users"],
+    ["locations", "locations"],
+    ["zones", "zones"],
+    ["sop_items", "sop_items"],
+    ["task_templates", "task_templates"],
+    ["task_instances", "task_instances"],
+    ["operational_tasks", "operational_tasks"],
+    ["device_switches", "device_switches"],
+    ["kpi_snapshots", "kpi_snapshots"],
+    ["audit_logs", "audit_logs"],
+  ] as const;
+  for (const [collectionName, tableName] of sourceMappings) {
+    const parity = await pool.query<{ source_count: number; normalized_count: number }>(
+      "SELECT " +
+      "(SELECT COUNT(*)::int FROM firestore_documents WHERE collection_name = $1 " +
+      "AND array_length(string_to_array(document_path, '/'), 1) = 2) AS source_count, " +
+      "(SELECT COUNT(*)::int FROM " + tableName + ") AS normalized_count",
+      [collectionName],
+    );
+    const sourceCount = Number(parity.rows[0]?.source_count || 0);
+    const normalizedCount = Number(parity.rows[0]?.normalized_count || 0);
+    const detail = details.find((item) => item.collectionName === collectionName);
+    if (normalizedCount < sourceCount && detail) {
+      const difference = sourceCount - normalizedCount;
+      detail.errors.push("Top-level source archive contains " + sourceCount +
+        " documents, but normalized PostgreSQL contains only " + normalizedCount + ".");
+      detail.failedDocs += difference;
+      detail.passedDocs = Math.max(0, detail.totalDocs - detail.failedDocs);
+      totalErrors += 1;
+    }
+  }
   const checks = [
     ["zones", "SELECT COUNT(*)::int AS count FROM zones z LEFT JOIN locations l ON l.id = z.location_id WHERE z.location_id IS NOT NULL AND l.id IS NULL", "Zone records reference missing locations."],
     ["zones", "SELECT COUNT(*)::int AS count FROM zones z LEFT JOIN users u ON u.id = z.responsible_employee_id WHERE z.responsible_employee_id IS NOT NULL AND u.id IS NULL", "Zone records reference missing responsible employees."],
@@ -943,6 +1005,8 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     ["operational_tasks", "SELECT COUNT(*)::int AS count FROM operational_tasks t LEFT JOIN zones z ON z.id = t.zone_id WHERE t.zone_id IS NOT NULL AND z.id IS NULL", "Operational tasks reference missing zones."],
     ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches d LEFT JOIN zones z ON z.id = d.zone_id WHERE d.zone_id IS NOT NULL AND z.id IS NULL", "Device switches reference missing zones."],
     ["kpi_snapshots", "SELECT COUNT(*)::int AS count FROM kpi_snapshots k LEFT JOIN users u ON u.id = k.profile_id WHERE k.profile_id IS NOT NULL AND u.id IS NULL", "KPI snapshots reference missing users."],
+    ["task_templates", "SELECT COUNT(*)::int AS count FROM task_templates tt LEFT JOIN zones z ON z.id = tt.zone_id WHERE z.id IS NULL", "Task templates reference missing zones."],
+    ["task_media", "SELECT COUNT(*)::int AS count FROM task_media m LEFT JOIN task_instances t ON t.id = m.task_id WHERE t.id IS NULL", "Task media references missing tasks."],
   ] as const;
   for (const [collectionName, sql, message] of checks) {
     const result = await pool.query<{ count: number }>(sql);
@@ -958,8 +1022,8 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
   const legacy = await pool.query<{ sop_orphans: number; template_orphans: number; base64_photos: number }>(
     "SELECT " +
     "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.sop_item_id WHERE t.sop_item_id IS NOT NULL AND s.id IS NULL) AS sop_orphans, " +
-    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.template_id WHERE t.template_id IS NOT NULL AND s.id IS NULL) AS template_orphans, " +
-    "(SELECT COUNT(*)::int FROM task_instances t WHERE COALESCE(t.raw_data->>'photo_before_url','') LIKE 'data:image/%' OR COALESCE(t.raw_data->>'photo_after_url','') LIKE 'data:image/%') AS base64_photos",
+    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN task_templates tt ON tt.id = t.template_id LEFT JOIN sop_items s ON s.id = t.template_id WHERE t.template_id IS NOT NULL AND tt.id IS NULL AND s.id IS NULL) AS template_orphans, " +
+    "(SELECT COUNT(*)::int FROM task_instances t WHERE t.raw_data::text LIKE '%data:image/%') AS base64_photos",
   );
   const legacyRow = legacy.rows[0];
   const taskDetail = details.find((item) => item.collectionName === "task_instances");
@@ -1017,6 +1081,187 @@ app.get("/api/audit-logs", requireAuth, asyncRoute(async (req, res) => {
     })),
     meta: { limit: rawLimit, offset: rawOffset },
   });
+}));
+
+const taskTemplateEditableFields = new Set([
+  "title", "description", "goal", "task_code", "category", "tools_required",
+  "frequency", "recurrence_days", "scheduled_time", "scheduled_times",
+  "zone_id", "default_assignee_id", "is_active",
+  "requires_photo_before", "requires_photo_after", "requires_supervisor_approval",
+  "requires_gps", "requires_signature", "is_reopenable", "auto_escalate_if_late",
+  "estimated_duration_minutes", "reference_image_url", "guide_image_url",
+]);
+
+app.get("/api/task-templates", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
+  const result = await pool.query("SELECT id, raw_data FROM task_templates ORDER BY task_code, id");
+  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.post("/api/task-templates", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  for (const key of Object.keys(body)) {
+    if (!taskTemplateEditableFields.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  const taskCode = typeof body.task_code === "string" ? body.task_code.trim() : "";
+  const zoneId = typeof body.zone_id === "string" ? body.zone_id : "";
+  if (!title || title.length > 300 || !taskCode || taskCode.length > 80 || !zoneId) {
+    res.status(400).json({ error: "title, task_code and zone_id are required" }); return;
+  }
+  if (body.recurrence_days !== undefined && !Array.isArray(body.recurrence_days)) {
+    res.status(400).json({ error: "recurrence_days must be an array" }); return;
+  }
+  if (body.scheduled_times !== undefined && !Array.isArray(body.scheduled_times)) {
+    res.status(400).json({ error: "scheduled_times must be an array" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const zone = await client.query("SELECT id FROM zones WHERE id = $1", [zoneId]);
+    if (zone.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown task template zone" }); return;
+    }
+    const defaultAssignee = typeof body.default_assignee_id === "string" ? body.default_assignee_id : null;
+    if (defaultAssignee) {
+      const eligible = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [defaultAssignee],
+      );
+      if (eligible.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Default assignee must be an active cleaner" }); return;
+      }
+    }
+    const now = new Date().toISOString();
+    const id = "tpl_" + randomBytes(8).toString("hex");
+    const template = {
+      ...body, id, title, task_code: taskCode, zone_id: zoneId,
+      recurrence_days: Array.isArray(body.recurrence_days) ? body.recurrence_days : [],
+      scheduled_times: Array.isArray(body.scheduled_times) ? body.scheduled_times : [],
+      is_active: typeof body.is_active === "boolean" ? body.is_active : true,
+      created_at: now, updated_at: now,
+    };
+    await client.query(
+      "INSERT INTO task_templates (id, zone_id, task_code, title, category, is_active, raw_data, created_at, updated_at) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz)",
+      [id, zoneId, taskCode, title, typeof body.category === "string" ? body.category : null,
+        template.is_active, JSON.stringify(template), now, now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "task_template_created", JSON.stringify({ task_template_id: id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "task_template_created", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ data: template });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.patch("/api/task-templates/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  for (const key of Object.keys(body)) {
+    if (!taskTemplateEditableFields.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  if (Object.keys(body).length === 0) {
+    res.status(400).json({ error: "At least one task template field is required" }); return;
+  }
+  if (body.recurrence_days !== undefined && !Array.isArray(body.recurrence_days)) {
+    res.status(400).json({ error: "recurrence_days must be an array" }); return;
+  }
+  if (body.scheduled_times !== undefined && !Array.isArray(body.scheduled_times)) {
+    res.status(400).json({ error: "scheduled_times must be an array" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query("SELECT id, raw_data FROM task_templates WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Task template not found" }); return;
+    }
+    const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
+      ? selected.rows[0].raw_data as Record<string, unknown> : {};
+    const now = new Date().toISOString();
+    const merged: Record<string, unknown> = { ...current, ...body, id: req.params.id, updated_at: now };
+    if (typeof merged.title !== "string" || !merged.title.trim() ||
+        typeof merged.task_code !== "string" || !merged.task_code.trim() ||
+        typeof merged.zone_id !== "string" || !merged.zone_id) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Task template title, task_code and zone_id are required" }); return;
+    }
+    const zone = await client.query("SELECT id FROM zones WHERE id = $1", [merged.zone_id]);
+    if (zone.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown task template zone" }); return;
+    }
+    if (typeof merged.default_assignee_id === "string" && merged.default_assignee_id) {
+      const eligible = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [merged.default_assignee_id],
+      );
+      if (eligible.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Default assignee must be an active cleaner" }); return;
+      }
+    }
+    await client.query(
+      "UPDATE task_templates SET zone_id = $2, task_code = $3, title = $4, category = $5, is_active = $6, raw_data = $7::jsonb, updated_at = $8::timestamptz WHERE id = $1",
+      [req.params.id, merged.zone_id, merged.task_code, merged.title, merged.category || null,
+        merged.is_active !== false, JSON.stringify(merged), now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "task_template_updated", JSON.stringify({ task_template_id: req.params.id, changed_fields: Object.keys(body), actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "task_template_updated", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ data: merged });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.delete("/api/task-templates/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const deleted = await client.query("DELETE FROM task_templates WHERE id = $1 RETURNING id", [req.params.id]);
+    if (deleted.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Task template not found" }); return;
+    }
+    const now = new Date().toISOString();
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "task_template_deleted", JSON.stringify({ task_template_id: req.params.id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "task_template_deleted", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ success: true });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 const sopEditableFields = new Set([
@@ -1241,6 +1486,105 @@ app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncR
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
 }));
 
+app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {
+  const publicId = typeof req.body?.public_id === "string" ? req.body.public_id.trim() : "";
+  const taskId = typeof req.body?.task_id === "string" ? req.body.task_id.trim() : "";
+  if (!publicId || publicId.length > 500 || !taskId || taskId.length > 200) {
+    res.status(400).json({ error: "public_id and task_id are required" }); return;
+  }
+  const taskResult = await pool.query(
+    "SELECT assigned_to, zone_id FROM task_instances WHERE id = $1",
+    [taskId],
+  );
+  if (taskResult.rowCount !== 1) {
+    res.status(404).json({ error: "Task not found" }); return;
+  }
+  const task = taskResult.rows[0];
+  if (req.auth?.role === "cleaner" && task.assigned_to !== req.auth.id) {
+    res.status(403).json({ error: "You can only clean up media for your assigned tasks" }); return;
+  }
+  if (req.auth?.role !== "cleaner" && req.auth?.role !== "admin" && req.auth?.role !== "supervisor") {
+    res.status(403).json({ error: "Not authorized to delete media" }); return;
+  }
+  const expectedPrefix = "task-photos/" + String(task.zone_id) + "/" + taskId + "/";
+  if (!publicId.startsWith(expectedPrefix)) {
+    res.status(400).json({ error: "Cloudinary public_id does not belong to this task" }); return;
+  }
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME || "";
+  const apiKey = process.env.CLOUDINARY_API_KEY || "";
+  const apiSecret = process.env.CLOUDINARY_API_SECRET || "";
+  if (!cloudName || !apiKey || !apiSecret) {
+    res.status(503).json({ error: "Cloudinary server-side deletion is not configured" }); return;
+  }
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = createHash("sha1")
+    .update("public_id=" + publicId + "&timestamp=" + timestamp + apiSecret, "utf8")
+    .digest("hex");
+  const form = new URLSearchParams({
+    public_id: publicId,
+    timestamp,
+    api_key: apiKey,
+    signature,
+  });
+  const response = await fetch("https://api.cloudinary.com/v1_1/" + encodeURIComponent(cloudName) + "/image/destroy", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form,
+  });
+  const payload = await response.json().catch(() => ({})) as { result?: string; error?: { message?: string } };
+  if (!response.ok || (payload.result !== "ok" && payload.result !== "not found")) {
+    res.status(502).json({ error: payload.error?.message || "Cloudinary media deletion failed" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT raw_data FROM task_instances WHERE id = $1 FOR UPDATE",
+      [taskId],
+    );
+    if (selected.rowCount === 1) {
+      const raw = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
+        ? { ...selected.rows[0].raw_data as Record<string, unknown> } : {};
+      for (const side of ["before", "after"] as const) {
+        const prefix = side === "before" ? "photo_before" : "photo_after";
+        if (raw[prefix + "_public_id"] === publicId) {
+          for (const suffix of ["_url", "_public_id", "_taken_at", "_uploaded_at", "_size", "_mime_type"]) {
+            delete raw[prefix + suffix];
+          }
+          const photos = raw.photos && typeof raw.photos === "object"
+            ? { ...raw.photos as Record<string, unknown> } : null;
+          if (photos) {
+            delete photos[side];
+            delete photos[side + "_url"];
+            raw.photos = photos;
+          }
+        }
+      }
+      await client.query(
+        "UPDATE task_instances SET raw_data = $2::jsonb, updated_at = NOW() WHERE id = $1",
+        [taskId, JSON.stringify(raw)],
+      );
+    }
+    await client.query("DELETE FROM task_media WHERE task_id = $1 AND public_id = $2", [taskId, publicId]);
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    const now = new Date().toISOString();
+    await client.query(
+      "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+      "VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::timestamptz)",
+      [auditId, taskId, "task_media_deleted",
+        JSON.stringify({ actor_id: req.auth?.id, public_id: publicId }),
+        JSON.stringify({ id: auditId, task_id: taskId, action: "task_media_deleted", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  res.json({ success: true, result: payload.result });
+}));
+
 app.post("/api/tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
     ? req.body as Record<string, unknown>
@@ -1278,6 +1622,27 @@ app.post("/api/tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRout
       await client.query("ROLLBACK");
       res.status(400).json({ error: "Unknown task zone" }); return;
     }
+    if (typeof body.template_id === "string" && body.template_id) {
+      const template = await client.query(
+        "SELECT id, zone_id FROM task_templates WHERE id = $1",
+        [body.template_id],
+      );
+      if (template.rowCount !== 1 || String(template.rows[0].zone_id) !== zoneId) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Task template does not exist or belongs to another zone" }); return;
+      }
+    }
+    if (typeof body.sop_item_id === "string" && body.sop_item_id) {
+      const sop = await client.query(
+        "SELECT id, zone_id FROM sop_items WHERE id = $1",
+        [body.sop_item_id],
+      );
+      if (sop.rowCount !== 1 || String(sop.rows[0].zone_id) !== zoneId) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "SOP item does not exist or belongs to another zone" }); return;
+      }
+    }
+
     if (taskType === "rework") {
       const parent = await client.query("SELECT id FROM task_instances WHERE id = $1", [body.parent_instance_id]);
       if (parent.rowCount !== 1) {
@@ -1539,6 +1904,7 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
   const cleanerFields = new Set([
     "status", "employee_notes", "employee_signature_url",
     "photo_before_url", "photo_after_url",
+    "photo_before_public_id", "photo_after_public_id",
     "photo_before_taken_at", "photo_before_uploaded_at",
     "photo_after_taken_at", "photo_after_uploaded_at",
     "photo_before_size", "photo_after_size",
@@ -1574,6 +1940,36 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
   if (updates.due_time !== undefined &&
       (typeof updates.due_time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(updates.due_time))) {
     res.status(400).json({ error: "due_time must use HH:MM" }); return;
+  }
+
+  for (const field of ["photo_before_public_id", "photo_after_public_id"]) {
+    const value = updates[field];
+    if (value !== undefined && (typeof value !== "string" || value.length > 500)) {
+      res.status(400).json({ error: field + " must be a string up to 500 characters" }); return;
+    }
+  }
+  for (const field of ["photo_before_url", "photo_after_url"]) {
+    const value = updates[field];
+    if (value !== undefined && (typeof value !== "string" || value.length > 2_000_000 ||
+        !(value.startsWith("https://") || value.startsWith("data:image/")))) {
+      res.status(400).json({ error: field + " must be a valid HTTPS or legacy image data URL" }); return;
+    }
+  }
+  for (const field of ["photo_before_size", "photo_after_size"]) {
+    const value = updates[field];
+    if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 15 * 1024 * 1024)) {
+      res.status(400).json({ error: field + " must be a non-negative image size up to 15 MB" }); return;
+    }
+  }
+  for (const field of ["photo_before_mime_type", "photo_after_mime_type"]) {
+    const value = updates[field];
+    if (value !== undefined && (typeof value !== "string" || !["image/jpeg", "image/png", "image/webp"].includes(value))) {
+      res.status(400).json({ error: field + " is not a supported image MIME type" }); return;
+    }
+  }
+  if (updates.photo_capture_status !== undefined &&
+      !["pending", "uploading", "uploaded", "failed"].includes(String(updates.photo_capture_status))) {
+    res.status(400).json({ error: "Unsupported photo_capture_status" }); return;
   }
 
   const client = await pool.connect();
@@ -1646,6 +2042,12 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
     if (result.rowCount !== 1) throw new Error("Task update did not affect exactly one row");
 
     const changedFields = Object.keys(updates);
+    if (changedFields.some((field) => field.startsWith("photo_before_"))) {
+      await upsertTaskMediaRecord(client, req.params.id, merged, "before");
+    }
+    if (changedFields.some((field) => field.startsWith("photo_after_"))) {
+      await upsertTaskMediaRecord(client, req.params.id, merged, "after");
+    }
     const action = changedFields.some((field) => field.startsWith("photo_"))
       ? "task_photo_updated"
       : changedFields.includes("assigned_to")

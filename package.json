@@ -11,6 +11,7 @@
     "test": "vitest run",
     "tasks:generate": "tsx server/generate-tasks.ts",
     "data:import-firestore": "tsx server/import-firestore-backup.ts",
+    "media:migrate-cloudinary": "tsx server/migrate-base64-photos-to-cloudinary.ts",
     "start:api": "tsx server/http.ts",
     "db:migrate": "tsx server/db/migrate.ts"
   },

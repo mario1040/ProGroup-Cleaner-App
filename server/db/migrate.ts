@@ -15,8 +15,8 @@ async function main(): Promise<void> {
     const schema = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
     await pool.query(schema);
     const required = [
-      "users", "auth_sessions", "locations", "zones", "sop_items",
-      "task_instances", "operational_tasks", "device_switches",
+      "users", "auth_sessions", "locations", "zones", "sop_items", "task_templates",
+      "task_instances", "task_media", "operational_tasks", "device_switches",
       "kpi_snapshots", "audit_logs", "task_generation_runs",
       "firestore_documents",
     ];

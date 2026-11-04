@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Camera, RefreshCw, Upload, CheckCircle, Loader2, AlertCircle, Trash2, ShieldCheck } from "lucide-react";
-import { uploadToCloudinary, recordOrphanCandidate } from "../lib/cloudinary";
+import { uploadToCloudinary } from "../lib/cloudinary";
+import { deletePhoto } from "../lib/api-postgres";
 import { compressImage } from "../lib/api-postgres";
 
 interface PhotoCaptureProps {
   label: string;
-  onPhotoUploaded: (metadata: { url: string; size: number; mimeType: string; takenAt: string }) => void;
+  onPhotoUploaded: (metadata: { url: string; publicId: string; size: number; mimeType: string; takenAt: string }) => void;
   required?: boolean;
   storagePath: string;
   disabled?: boolean;
@@ -160,41 +161,23 @@ export default function PhotoCapture({ label, onPhotoUploaded, required = true, 
         });
       }, 300);
 
-      let uploadedMetadata: { url: string; size: number; mimeType: string; takenAt: string };
-      let publicId: string | null = null;
-      let usedInlineFallback = false;
-
-      try {
-        const result = await uploadToCloudinary(payload, folder);
-        publicId = result.public_id || null;
-        uploadedMetadata = {
-          url: result.secure_url,
-          size: result.bytes || compressedSize || originalSize || 0,
-          mimeType: "image/jpeg",
-          takenAt: takenAt || new Date().toISOString(),
-        };
-        console.log("[PhotoCapture] Photo uploaded successfully to Cloudinary:", uploadedMetadata);
-      } catch (uploadError) {
-        // Keep the image fallback for browser CORS/configuration failures.
-        if (!payload.startsWith("data:image/")) throw uploadError;
-        usedInlineFallback = true;
-        uploadedMetadata = {
-          url: payload,
-          size: compressedSize || originalSize || 0,
-          mimeType: "image/jpeg",
-          takenAt: takenAt || new Date().toISOString(),
-        };
-        console.warn("[PhotoCapture] Cloudinary unavailable; retaining compressed Base64 fallback.", uploadError);
-      }
+      const result = await uploadToCloudinary(payload, folder);
+      const publicId = result.public_id;
+      if (!publicId || !result.secure_url) throw new Error("Cloudinary لم يُرجع معرف الصورة ورابطها الآمن.");
+      const uploadedMetadata = {
+        url: result.secure_url,
+        publicId,
+        size: result.bytes || compressedSize || originalSize || 0,
+        mimeType: "image/jpeg",
+        takenAt: takenAt || new Date().toISOString(),
+      };
+      console.log("[PhotoCapture] Photo uploaded successfully to Cloudinary:", uploadedMetadata);
 
       if (progressInterval) clearInterval(progressInterval);
       setProgress(100);
       setUploadedUrl(uploadedMetadata.url);
       setUploadedPublicId(publicId);
       onPhotoUploaded(uploadedMetadata);
-      if (usedInlineFallback) {
-        setError("تم حفظ الصورة مؤقتاً داخل المهمة بسبب تعذر الوصول إلى Cloudinary.");
-      }
     } catch (err: any) {
       console.error("[PhotoCapture] Photo persistence failed:", err);
       setError(err?.message || "تعذر حفظ الصورة. يرجى المحاولة مرة أخرى.");
@@ -208,8 +191,11 @@ export default function PhotoCapture({ label, onPhotoUploaded, required = true, 
   const resetPhoto = () => {
     if (uploading) return;
     if (uploadedPublicId && uploadedUrl) {
-      const folder = storagePath.split("/").slice(0, -1).join("/") || "task_photos";
-      recordOrphanCandidate(uploadedPublicId, uploadedUrl, folder, "User reset photo to capture new one");
+      const parts = storagePath.split("/");
+      const taskId = parts.length >= 3 ? parts[2] : "";
+      if (taskId) void deletePhoto(uploadedPublicId, taskId).catch((err) => {
+        console.error("[PhotoCapture] Cloudinary cleanup failed; asset may need manual cleanup.", err);
+      });
     }
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current);

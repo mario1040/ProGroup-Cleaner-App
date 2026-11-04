@@ -44,17 +44,27 @@ function readCookie(req: Request, name: string): string | null {
 }
 function setSessionCookie(res: Response, token: string): void {
   const secure = process.env.NODE_ENV === "production";
-  const sameSite = secure ? "None" : "Lax";
+  // Lax is the safe default for a same-site deployment. Cross-site deployments
+  // must explicitly opt into SameSite=None and HTTPS.
+  const configuredSameSite = (process.env.SESSION_COOKIE_SAMESITE || "Lax").toLowerCase();
+  const sameSite = configuredSameSite === "none" ? "None"
+    : configuredSameSite === "strict" ? "Strict" : "Lax";
+  if (sameSite === "None" && !secure) {
+    throw new Error("SameSite=None requires NODE_ENV=production and HTTPS.");
+  }
   res.setHeader("Set-Cookie",
     COOKIE_NAME + "=" + encodeURIComponent(token) +
     "; HttpOnly; Path=/; SameSite=" + sameSite +
     (secure ? "; Secure" : "") + "; Max-Age=" + String(SESSION_HOURS * 3600));
 }
 function clearSessionCookie(res: Response): void {
+  const secure = process.env.NODE_ENV === "production";
+  const configuredSameSite = (process.env.SESSION_COOKIE_SAMESITE || "Lax").toLowerCase();
+  const sameSite = configuredSameSite === "none" ? "None"
+    : configuredSameSite === "strict" ? "Strict" : "Lax";
   res.setHeader("Set-Cookie",
-    COOKIE_NAME + "=; HttpOnly; Path=/; SameSite=" +
-    (process.env.NODE_ENV === "production" ? "None; Secure" : "Lax") +
-    "; Max-Age=0");
+    COOKIE_NAME + "=; HttpOnly; Path=/; SameSite=" + sameSite +
+    (secure ? "; Secure" : "") + "; Max-Age=0");
 }
 function publicProfile(row: Record<string, unknown>): AuthContext & Record<string, unknown> {
   const raw = row.raw_data && typeof row.raw_data === "object" && !Array.isArray(row.raw_data)
@@ -112,6 +122,13 @@ function allowRoles(...roles: Role[]) {
 }
 function requireSameOrigin(req: Request, res: Response, next: NextFunction): void {
   const origin = req.get("origin");
+  const isStateChanging = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+  // Browser state-changing requests always carry Origin. In production, reject
+  // origin-less writes so an attacker cannot bypass the allowlist via CSRF.
+  if (isStateChanging && process.env.NODE_ENV === "production" && !origin) {
+    res.status(403).json({ error: "Origin header required" });
+    return;
+  }
   if (origin && !allowedOrigins.has(origin)) {
     res.status(403).json({ error: "Origin not allowed" });
     return;
@@ -127,6 +144,13 @@ function asyncRoute(
 }
 
 app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
 app.use((req, res, next) => {
   const origin = req.get("origin");
   if (origin && allowedOrigins.has(origin)) {
@@ -145,6 +169,13 @@ app.use(requireSameOrigin);
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 app.post("/api/auth/login", asyncRoute(async (req, res) => {
   const ip = req.ip || "unknown";
+  // Bound memory use if this process is exposed to many distinct source IPs.
+  if (loginAttempts.size > 10_000) {
+    for (const [key, value] of loginAttempts) {
+      if (value.resetAt <= Date.now()) loginAttempts.delete(key);
+    }
+    if (loginAttempts.size > 10_000) loginAttempts.clear();
+  }
   const now = Date.now();
   const attempt = loginAttempts.get(ip);
   if (attempt && attempt.resetAt > now && attempt.count >= 10) {
@@ -202,8 +233,21 @@ app.get("/api/auth/me", requireAuth, (req: AuthRequest, res) => {
 
 app.get("/health/live", (_req, res) => res.json({ status: "ok" }));
 app.get("/health/ready", asyncRoute(async (_req, res) => {
-  await pool.query("SELECT 1");
-  res.json({ status: "ready", database: "connected" });
+  const result = await pool.query<{ missing: string[] }>(
+    "SELECT ARRAY_REMOVE(ARRAY[" +
+      "CASE WHEN to_regclass('public.users') IS NULL THEN 'users' END, " +
+      "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
+      "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
+      "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
+      "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END" +
+    "], NULL) AS missing",
+  );
+  const missing = result.rows[0]?.missing || [];
+  if (missing.length > 0) {
+    res.status(503).json({ status: "not_ready", database: "connected", missing });
+    return;
+  }
+  res.json({ status: "ready", database: "connected", schema: "present" });
 }));
 
 app.get("/api/users", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {

@@ -135,3 +135,8 @@ npm run start:api
 ```
 
 This is an initial API slice, not yet a complete frontend cutover. The current React application still calls Firebase directly. Task mutations (start/complete/photo upload/approval/rework), full metadata CRUD, KPI/audit endpoints, and the frontend API adapter must be completed and tested before switching production traffic. Do not enable the PostgreSQL scheduler or remove Firebase during this phase.
+
+
+## Database target guard
+
+The API, Firestore importer and task scheduler validate the database name before opening a connection. They only accept a database named `naris_ops`. This is an intentional safety barrier so these tools cannot accidentally write to the existing marketing or Evolution databases. Use a dedicated least-privilege application role rather than the PostgreSQL superuser.

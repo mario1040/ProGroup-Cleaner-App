@@ -100,6 +100,7 @@ export interface TaskInstance {
   requires_gps?: boolean;
   requires_signature?: boolean;
   photo_before_url?: string;
+  photo_before_public_id?: string;
   photos?: LegacyTaskPhotos;
   before_photo_url?: string;
   after_photo_url?: string;
@@ -112,6 +113,7 @@ export interface TaskInstance {
   photo_before_size?: number;
   photo_before_mime_type?: string;
   photo_after_url?: string;
+  photo_after_public_id?: string;
   photo_after_taken_at?: string;
   photo_after_uploaded_at?: string;
   photo_after_size?: number;

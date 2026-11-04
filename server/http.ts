@@ -137,6 +137,15 @@ function requireSameOrigin(req: Request, res: Response, next: NextFunction): voi
   }
   next();
 }
+function getBusinessDate(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: process.env.APP_TIME_ZONE || "Africa/Cairo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return String(values.year) + "-" + String(values.month) + "-" + String(values.day);
+}
+
 function isValidDateOnly(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(value + "T00:00:00.000Z");
@@ -348,6 +357,286 @@ app.get("/api/audit-logs", requireAuth, asyncRoute(async (req, res) => {
 app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
   const result = await pool.query("SELECT id, raw_data FROM sop_items ORDER BY id");
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.post("/api/tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  const zoneId = typeof body.zone_id === "string" ? body.zone_id : "z_reception";
+  const dueDate = typeof body.due_date === "string" ? body.due_date : getBusinessDate();
+  const dueTime = typeof body.due_time === "string" ? body.due_time : "12:00";
+  if (!title || title.length > 300) {
+    res.status(400).json({ error: "A task title is required (maximum 300 characters)" }); return;
+  }
+  if (!isValidDateOnly(dueDate)) {
+    res.status(400).json({ error: "due_date must be a valid YYYY-MM-DD date" }); return;
+  }
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime)) {
+    res.status(400).json({ error: "due_time must use HH:MM" }); return;
+  }
+  const taskType = typeof body.task_type === "string" ? body.task_type : "one_time";
+  if (!["one_time", "recurring", "rework"].includes(taskType)) {
+    res.status(400).json({ error: "Unsupported task type" }); return;
+  }
+  if (taskType === "rework" && typeof body.parent_instance_id !== "string") {
+    res.status(400).json({ error: "Rework tasks require parent_instance_id" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const zone = await client.query("SELECT id FROM zones WHERE id = $1", [zoneId]);
+    if (zone.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown task zone" }); return;
+    }
+
+    let assignedTo = typeof body.assigned_to === "string" ? body.assigned_to : "";
+    if (assignedTo) {
+      const eligible = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [assignedTo],
+      );
+      if (eligible.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Tasks can only be assigned to active cleaners" }); return;
+      }
+    } else {
+      const best = await client.query(
+        "SELECT u.id FROM users u LEFT JOIN task_instances t " +
+        "ON t.assigned_to = u.id AND t.due_date = $1::date " +
+        "WHERE u.role = 'cleaner' AND u.is_active = TRUE " +
+        "GROUP BY u.id ORDER BY COUNT(t.id), u.id LIMIT 1",
+        [dueDate],
+      );
+      if (best.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "No active cleaners are available" }); return;
+      }
+      assignedTo = String(best.rows[0].id);
+    }
+
+    const now = new Date().toISOString();
+    const id = "ti_" + randomBytes(8).toString("hex");
+    const task: Record<string, unknown> = {
+      id,
+      template_id: typeof body.template_id === "string" ? body.template_id : null,
+      sop_item_id: typeof body.sop_item_id === "string" ? body.sop_item_id : null,
+      zone_id: zoneId,
+      assigned_to: assignedTo,
+      assigned_by: req.auth?.id || "p1",
+      task_type: taskType,
+      parent_instance_id: typeof body.parent_instance_id === "string" ? body.parent_instance_id : null,
+      title,
+      description: typeof body.description === "string" ? body.description : "",
+      due_date: dueDate,
+      due_time: dueTime,
+      status: "pending",
+      goal: typeof body.goal === "string" ? body.goal : "",
+      task_code: typeof body.task_code === "string" ? body.task_code : "",
+      category: typeof body.category === "string" ? body.category : "تشغيل",
+      tools_required: typeof body.tools_required === "string" ? body.tools_required : "",
+      estimated_duration_minutes: Number.isFinite(Number(body.estimated_duration_minutes))
+        ? Number(body.estimated_duration_minutes) : 0,
+      requires_photo_before: typeof body.requires_photo_before === "boolean" ? body.requires_photo_before : true,
+      requires_photo_after: typeof body.requires_photo_after === "boolean" ? body.requires_photo_after : true,
+      requires_supervisor_approval: typeof body.requires_supervisor_approval === "boolean"
+        ? body.requires_supervisor_approval : true,
+      requires_gps: body.requires_gps === true,
+      requires_signature: false,
+      supervisor_approved: false,
+      created_at: now,
+      updated_at: now,
+    };
+    await client.query(
+      "INSERT INTO task_instances (id, template_id, sop_item_id, zone_id, assigned_to, assigned_by, " +
+      "task_type, parent_instance_id, title, description, due_date, due_time, status, raw_data, created_at, updated_at) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12,$13,$14::jsonb,$15::timestamptz,$16::timestamptz)",
+      [id, task.template_id, task.sop_item_id, zoneId, assignedTo, task.assigned_by,
+        taskType, task.parent_instance_id, title, task.description, dueDate, dueTime,
+        "pending", JSON.stringify(task), now, now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+      "VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::timestamptz)",
+      [auditId, id, "task_created",
+        JSON.stringify({ task_type: taskType, assigned_to: assignedTo, due_date: dueDate, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, task_id: id, action: "task_created", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ data: task });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post("/api/tasks/:id/approve", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const grade = req.body?.quality_grade;
+  if (!["A", "B", "C"].includes(grade)) {
+    res.status(400).json({ error: "quality_grade must be A, B or C" }); return;
+  }
+  const notes = typeof req.body?.supervisor_notes === "string" ? req.body.supervisor_notes : "";
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT id, raw_data, assigned_to, zone_id, due_date, due_time, status " +
+      "FROM task_instances WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Task not found" }); return;
+    }
+    const row = selected.rows[0];
+    if (row.status !== "completed") {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Only completed tasks can be approved" }); return;
+    }
+    const now = new Date().toISOString();
+    const task = {
+      ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+      id: row.id, assigned_to: row.assigned_to, zone_id: row.zone_id,
+      due_date: String(row.due_date).slice(0, 10), due_time: row.due_time, status: row.status,
+      supervisor_approved: true, supervisor_approved_by: req.auth?.id,
+      supervisor_approved_at: now, quality_grade: grade, supervisor_notes: notes, updated_at: now,
+    };
+    await client.query(
+      "UPDATE task_instances SET raw_data = $2::jsonb, updated_at = $3::timestamptz WHERE id = $1",
+      [req.params.id, JSON.stringify(task), now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+      "VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::timestamptz)",
+      [auditId, req.params.id, "task_approved",
+        JSON.stringify({ supervisor_id: req.auth?.id, quality_grade: grade, supervisor_notes: notes }),
+        JSON.stringify({ id: auditId, task_id: req.params.id, action: "task_approved", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ data: task });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.post("/api/tasks/:id/reject", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const notes = typeof req.body?.supervisor_notes === "string" ? req.body.supervisor_notes : "";
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT id, raw_data, assigned_to, zone_id, due_date, due_time, status, template_id " +
+      "FROM task_instances WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Task not found" }); return;
+    }
+    const row = selected.rows[0];
+    if (row.status === "rejected") {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Task has already been rejected" }); return;
+    }
+
+    const now = new Date().toISOString();
+    const today = getBusinessDate();
+    const original = {
+      ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+      id: row.id, assigned_to: row.assigned_to, zone_id: row.zone_id,
+      due_date: String(row.due_date).slice(0, 10), due_time: row.due_time,
+      status: "rejected", supervisor_approved: false,
+      supervisor_approved_by: req.auth?.id, supervisor_approved_at: now,
+      supervisor_notes: notes || "مرفوضة وتحتاج لإعادة التنظيف", updated_at: now,
+    };
+
+    let reworkAssignee = String(row.assigned_to || "");
+    let eligible = await client.query(
+      "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+      [reworkAssignee],
+    );
+    if (eligible.rowCount !== 1) {
+      const zone = await client.query("SELECT responsible_employee_id FROM zones WHERE id = $1", [row.zone_id]);
+      const responsibleId = zone.rows[0]?.responsible_employee_id;
+      eligible = responsibleId ? await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [responsibleId],
+      ) : { rows: [], rowCount: 0 } as typeof eligible;
+      if (eligible.rowCount === 1) {
+        reworkAssignee = String(eligible.rows[0].id);
+      } else {
+        const best = await client.query(
+          "SELECT u.id FROM users u LEFT JOIN task_instances t " +
+          "ON t.assigned_to = u.id AND t.due_date = $1::date " +
+          "WHERE u.role = 'cleaner' AND u.is_active = TRUE " +
+          "GROUP BY u.id ORDER BY COUNT(t.id), u.id LIMIT 1",
+          [today],
+        );
+        if (best.rowCount !== 1) {
+          await client.query("ROLLBACK");
+          res.status(409).json({ error: "No active cleaners are available for rework" }); return;
+        }
+        reworkAssignee = String(best.rows[0].id);
+      }
+    }
+
+    const reworkId = "ti_rework_" + randomBytes(8).toString("hex");
+    const rework = {
+      id: reworkId,
+      template_id: row.template_id,
+      zone_id: row.zone_id,
+      assigned_to: reworkAssignee,
+      assigned_by: req.auth?.id || "p1",
+      task_type: "rework",
+      parent_instance_id: row.id,
+      title: "إعادة تنظيف: " + String(original.title || "المهمة") + " ⚠️",
+      description: "سبب الرفض: " + (notes || "ملاحظات المشرف") +
+        ". يرجى إعادة التنظيف بالكامل والتقاط صور واضحة بعد الانتهاء.",
+      due_date: today,
+      due_time: "17:00",
+      status: "pending",
+      supervisor_approved: false,
+      created_at: now,
+      updated_at: now,
+    };
+    await client.query(
+      "UPDATE task_instances SET status = 'rejected', raw_data = $2::jsonb, updated_at = $3::timestamptz WHERE id = $1",
+      [req.params.id, JSON.stringify(original), now],
+    );
+    await client.query(
+      "INSERT INTO task_instances (id, template_id, zone_id, assigned_to, assigned_by, task_type, " +
+      "parent_instance_id, title, description, due_date, due_time, status, raw_data, created_at, updated_at) " +
+      "VALUES ($1,$2,$3,$4,$5,'rework',$6,$7,$8,$9::date,$10,$11,$12::jsonb,$13::timestamptz,$14::timestamptz)",
+      [reworkId, row.template_id, row.zone_id, reworkAssignee, rework.assigned_by, row.id,
+        rework.title, rework.description, today, "17:00", "pending", JSON.stringify(rework), now, now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+      "VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::timestamptz)",
+      [auditId, req.params.id, "task_rejected_rework_created",
+        JSON.stringify({ rework_task_id: reworkId, supervisor_id: req.auth?.id,
+          rework_assigned_to: reworkAssignee, supervisor_notes: notes }),
+        JSON.stringify({ id: auditId, task_id: req.params.id, action: "task_rejected_rework_created", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ data: { original, rework } });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {

@@ -2,6 +2,7 @@ import "dotenv/config";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Pool } from "pg";
+import { assertNarisDatabaseUrl } from "./db/connection";
 
 type Role = "admin" | "supervisor" | "cleaner";
 interface AuthContext { id: string; username: string; full_name: string; role: Role; is_active: boolean; }
@@ -323,7 +324,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 async function start(): Promise<void> {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  assertNarisDatabaseUrl(process.env.DATABASE_URL);
   await pool.query("SELECT 1");
   const server = app.listen(PORT, "0.0.0.0", () => {
     process.stdout.write("Naris Ops API listening on port " + PORT + "\n");

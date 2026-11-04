@@ -159,7 +159,7 @@ These additions do **not** complete the migration. The frontend still calls Fire
 | locations | locations | Implemented |
 | zones | zones | Implemented |
 | sop_items | sop_items | Implemented; recurring scheduler reads this table |
-| task_templates | task_templates | Added in PR #7; targeted importer support included |
+| task_templates | task_templates | Merged in PR #7; targeted importer support included |
 | task_instances | task_instances | Implemented; task lifecycle and metadata stored in JSONB plus indexed columns |
 | operational_tasks | operational_tasks | Implemented; read API |
 | device_switches | device_switches | Implemented; read API |
@@ -172,8 +172,8 @@ Additional PostgreSQL-owned entities:
 - `inventory_items` is a new PostgreSQL-backed feature, not one of the ten collections in the source backup.
 - `firestore_documents` retains source JSON and document paths for audit/rollback.
 
-### PR #7 parity work
-PR #7 adds:
+### Merged PR #7 parity work
+Merged PR #7 adds:
 - A distinct `task_templates` table and CRUD API; it is no longer aliased to `sop_items`.
 - Importer support for normalizing `task_templates`, and `--only-collection` to import that collection without overwriting active task records.
 - Preservation of an existing PostgreSQL password record when a source backup is re-imported.
@@ -191,7 +191,7 @@ PR #7 adds:
 6. **Task engine parity and scheduler cutover** remain disabled until same-date plan, assignment and existing-task-state reconciliation is accepted. Keep `TASK_GENERATION_ENABLED=false`.
 7. **Live deployment** still requires migration, importer, readiness, login, task lifecycle, photo, approvals, KPI, audit, inventory persistence, backup/restore and rollback tests on the actual Naris server.
 
-### Safe next operations after PR #7 is merged
+### Safe next operations after PR #7 merge
 1. Back up the current `naris_ops` database and confirm the Firestore backup directory is present.
 2. Run a dry-run of the targeted `task_templates` import, then apply only that collection. Do not re-import all task collections over live operational data.
 3. Run the Cloudinary media migration in dry-run mode; review the number of Base64 and Firebase Storage URLs. Configure the server-side Cloudinary upload preset before applying.

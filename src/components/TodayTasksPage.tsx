@@ -114,7 +114,7 @@ export default function TodayTasksPage({
   const [executingStep, setExecutingStep] = useState<'details' | 'before_photo' | 'after_photo' | 'notes_and_submit'>('details');
   const [photoBefore, setPhotoBefore] = useState<string | null>(null);
   const [photoAfter, setPhotoAfter] = useState<string | null>(null);
-  const [photoAfterMeta, setPhotoAfterMeta] = useState<{ url: string; size: number; mimeType: string; takenAt: string } | null>(null);
+  const [photoAfterMeta, setPhotoAfterMeta] = useState<{ url: string; publicId: string; size: number; mimeType: string; takenAt: string } | null>(null);
   const [notes, setNotes] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
@@ -244,7 +244,7 @@ export default function TodayTasksPage({
   };
 
   // Confirm photo before and transition to in_progress
-  const handlePhotoBeforeSubmitted = async (meta: { url: string; size: number; mimeType: string; takenAt: string }) => {
+  const handlePhotoBeforeSubmitted = async (meta: { url: string; publicId: string; size: number; mimeType: string; takenAt: string }) => {
     if (!selectedTask) return;
     setPhotoBefore(meta.url);
     
@@ -252,6 +252,7 @@ export default function TodayTasksPage({
       setIsSubmitting(true);
       const updated = await updateTask(selectedTask.id, { 
         photo_before_url: meta.url,
+        photo_before_public_id: meta.publicId,
         photo_before_taken_at: meta.takenAt,
         photo_before_uploaded_at: new Date().toISOString(),
         photo_before_size: meta.size,
@@ -269,9 +270,10 @@ export default function TodayTasksPage({
     } catch (err) {
       console.error(err);
       showToast("حدث خطأ أثناء حفظ صورة قبل", "error");
-      // Rollback the uploaded photo from Storage
-      const path = `task-photos/${selectedTask.zone_id}/${selectedTask.id}/before.jpg`;
-      await deletePhoto(path);
+      // Roll back the Cloudinary object if the database update failed.
+      await deletePhoto(meta.publicId, selectedTask.id).catch((cleanupError) => {
+        console.error("[TodayTasksPage] Before-photo cleanup failed.", cleanupError);
+      });
       setPhotoBefore(null);
     } finally {
       setIsSubmitting(false);
@@ -292,7 +294,7 @@ export default function TodayTasksPage({
     }
   };
 
-  const handlePhotoAfterSubmitted = (meta: { url: string; size: number; mimeType: string; takenAt: string }) => {
+  const handlePhotoAfterSubmitted = (meta: { url: string; publicId: string; size: number; mimeType: string; takenAt: string }) => {
     if (!isUsableImageUrl(meta.url)) {
       showToast("رابط صورة بعد العمل غير صالح.", "error");
       return;
@@ -330,7 +332,8 @@ export default function TodayTasksPage({
       const updates: Partial<TaskInstance> = {
         status: 'completed',
         employee_notes: notes ? notes.trim() : undefined,
-        photo_after_url: photoAfter || undefined
+        photo_after_url: photoAfter || undefined,
+        photo_after_public_id: photoAfterMeta?.publicId
       };
 
       if (photoAfterMeta) {
@@ -364,8 +367,11 @@ export default function TodayTasksPage({
       
       // Rollback the uploaded photo after from Storage
       if (photoAfter) {
-        const path = `task-photos/${selectedTask.zone_id}/${selectedTask.id}/after.jpg`;
-        await deletePhoto(path);
+        if (photoAfterMeta?.publicId) {
+          await deletePhoto(photoAfterMeta.publicId, selectedTask.id).catch((cleanupError) => {
+            console.error("[TodayTasksPage] After-photo cleanup failed.", cleanupError);
+          });
+        }
       }
     } finally {
       setIsSubmitting(false);

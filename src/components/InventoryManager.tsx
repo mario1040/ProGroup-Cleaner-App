@@ -1,98 +1,124 @@
-import React, { useState, useEffect } from 'react';
-import { Package, Plus, Search, AlertCircle, Edit2, Trash2, Check, X, Box } from 'lucide-react';
-
-export interface InventoryItem {
-  id: string;
-  name: string;
-  category: 'معدات تنظيف' | 'مواد كيميائية' | 'مستهلكات' | 'أخرى';
-  quantity: number;
-  min_quantity: number;
-  last_updated: string;
-  status: 'متوفر' | 'منخفض' | 'نفد';
-}
+import React, { useState, useEffect } from "react";
+import { Package, Plus, Search, AlertCircle, Trash2, Check, X, Box } from "lucide-react";
+import type { InventoryItem } from "../types";
+import {
+  createInventoryItem,
+  deleteInventoryItem,
+  getInventoryItems,
+  updateInventoryItem,
+} from "../lib/api-postgres";
 
 export default function InventoryManager() {
   const [items, setItems] = useState<InventoryItem[]>([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [isAdding, setIsAdding] = useState(false);
-  const [newItem, setNewItem] = useState<Partial<InventoryItem>>({
-    category: 'معدات تنظيف',
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [newItem, setNewItem] = useState<{
+    name?: string;
+    category: InventoryItem["category"];
+    quantity: number;
+    min_quantity: number;
+  }>({
+    category: "معدات تنظيف",
     quantity: 0,
-    min_quantity: 5
+    min_quantity: 5,
   });
 
-  // Load from local storage to avoid firebase rule issues for now
   useEffect(() => {
-    const saved = localStorage.getItem('naris_inventory_data');
-    if (saved) {
+    let cancelled = false;
+    const loadInventory = async () => {
+      setIsLoading(true);
+      setError("");
       try {
-        setItems(JSON.parse(saved));
-      } catch (e) {
-        console.error(e);
+        let serverItems = await getInventoryItems();
+        const legacyRaw = localStorage.getItem("naris_inventory_data");
+        if (serverItems.length === 0 && legacyRaw) {
+          let legacyItems: InventoryItem[] = [];
+          try {
+            const parsed: unknown = JSON.parse(legacyRaw);
+            if (Array.isArray(parsed)) legacyItems = parsed as InventoryItem[];
+          } catch {
+            throw new Error("تعذر قراءة نسخة المخزون القديمة المحفوظة على هذا الجهاز.");
+          }
+          const migratedIds = new Set<string>(
+            JSON.parse(localStorage.getItem("naris_inventory_migrated_ids") || "[]") as string[],
+          );
+          const demoIds = new Set(["1", "2", "3"]);
+          for (const legacy of legacyItems) {
+            if (!legacy || typeof legacy.id !== "string" || demoIds.has(legacy.id) || migratedIds.has(legacy.id)) continue;
+            if (!legacy.name || !Number.isSafeInteger(legacy.quantity) || !Number.isSafeInteger(legacy.min_quantity)) continue;
+            await createInventoryItem({
+              name: legacy.name,
+              category: legacy.category,
+              quantity: legacy.quantity,
+              min_quantity: legacy.min_quantity,
+            });
+            migratedIds.add(legacy.id);
+            localStorage.setItem("naris_inventory_migrated_ids", JSON.stringify([...migratedIds]));
+          }
+          localStorage.removeItem("naris_inventory_data");
+          localStorage.removeItem("naris_inventory_migrated_ids");
+          serverItems = await getInventoryItems();
+        }
+        if (!cancelled) setItems(serverItems);
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "تعذر تحميل المخزون من قاعدة البيانات.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-    } else {
-      // Default dummy data
-      const initial: InventoryItem[] = [
-        { id: '1', name: 'ملمع زجاج', category: 'مواد كيميائية', quantity: 25, min_quantity: 10, last_updated: new Date().toISOString(), status: 'متوفر' },
-        { id: '2', name: 'مكنسة كهربائية', category: 'معدات تنظيف', quantity: 3, min_quantity: 5, last_updated: new Date().toISOString(), status: 'منخفض' },
-        { id: '3', name: 'أكياس قمامة كبيرة', category: 'مستهلكات', quantity: 0, min_quantity: 20, last_updated: new Date().toISOString(), status: 'نفد' },
-      ];
-      setItems(initial);
-      localStorage.setItem('naris_inventory_data', JSON.stringify(initial));
-    }
+    };
+    void loadInventory();
+    return () => { cancelled = true; };
   }, []);
 
-  const saveItems = (newItems: InventoryItem[]) => {
-    setItems(newItems);
-    localStorage.setItem('naris_inventory_data', JSON.stringify(newItems));
-  };
-
-  const handleAddItem = () => {
-    if (!newItem.name || newItem.quantity === undefined) return;
-    
-    const qty = Number(newItem.quantity);
-    const minQty = Number(newItem.min_quantity || 5);
-    
-    let status: InventoryItem['status'] = 'متوفر';
-    if (qty === 0) status = 'نفد';
-    else if (qty <= minQty) status = 'منخفض';
-
-    const item: InventoryItem = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: newItem.name,
-      category: newItem.category as any,
-      quantity: qty,
-      min_quantity: minQty,
-      last_updated: new Date().toISOString(),
-      status
-    };
-
-    saveItems([item, ...items]);
-    setIsAdding(false);
-    setNewItem({ category: 'معدات تنظيف', quantity: 0, min_quantity: 5 });
-  };
-
-  const handleDelete = (id: string) => {
-    if (confirm('هل أنت متأكد من حذف هذا العنصر؟')) {
-      saveItems(items.filter(i => i.id !== id));
+  const handleAddItem = async () => {
+    if (!newItem.name?.trim() || !Number.isSafeInteger(newItem.quantity) || newItem.quantity < 0 ||
+        !Number.isSafeInteger(newItem.min_quantity) || newItem.min_quantity < 0) {
+      setError("راجع اسم العنصر والكمية والحد الأدنى.");
+      return;
+    }
+    try {
+      setError("");
+      const created = await createInventoryItem({
+        name: newItem.name.trim(),
+        category: newItem.category,
+        quantity: newItem.quantity,
+        min_quantity: newItem.min_quantity,
+      });
+      setItems((current) => [created, ...current]);
+      setIsAdding(false);
+      setNewItem({ category: "معدات تنظيف", quantity: 0, min_quantity: 5 });
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "فشل حفظ العنصر في PostgreSQL.");
     }
   };
 
-  const updateQuantity = (id: string, delta: number) => {
-    saveItems(items.map(item => {
-      if (item.id === id) {
-        const newQty = Math.max(0, item.quantity + delta);
-        let status: InventoryItem['status'] = 'متوفر';
-        if (newQty === 0) status = 'نفد';
-        else if (newQty <= item.min_quantity) status = 'منخفض';
-        
-        return { ...item, quantity: newQty, status, last_updated: new Date().toISOString() };
-      }
-      return item;
-    }));
+  const handleDelete = async (id: string) => {
+    if (!confirm("هل أنت متأكد من حذف هذا العنصر؟")) return;
+    try {
+      setError("");
+      await deleteInventoryItem(id);
+      setItems((current) => current.filter((item) => item.id !== id));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "فشل حذف العنصر من قاعدة البيانات.");
+    }
   };
 
-  const filteredItems = items.filter(i => i.name.includes(search) || i.category.includes(search));
+  const updateQuantity = async (id: string, delta: number) => {
+    const current = items.find((item) => item.id === id);
+    if (!current) return;
+    const quantity = Math.max(0, current.quantity + delta);
+    try {
+      setError("");
+      const updated = await updateInventoryItem(id, { quantity });
+      setItems((all) => all.map((item) => item.id === id ? updated : item));
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "فشل تحديث الكمية في قاعدة البيانات.");
+    }
+  };
+
+  const filteredItems = items.filter((item) => item.name.includes(search) || item.category.includes(search));
 
   return (
     <div className="flex flex-col gap-6">
@@ -112,6 +138,8 @@ export default function InventoryManager() {
           {isAdding ? 'إلغاء' : 'إضافة عنصر جديد'}
         </button>
       </div>
+
+      {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
 
       {isAdding && (
         <div className="bg-indigo-50 border border-indigo-100 p-5 rounded-2xl animate-in fade-in slide-in-from-top-4">
@@ -207,7 +235,9 @@ export default function InventoryManager() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredItems.length === 0 ? (
+              {isLoading ? (
+                <tr><td colSpan={5} className="p-8 text-center text-slate-400 text-sm">جاري تحميل المخزون من PostgreSQL...</td></tr>
+              ) : filteredItems.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-slate-400 text-sm">لا توجد عناصر مطابقة للبحث</td>
                 </tr>

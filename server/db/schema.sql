@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL,
   full_name TEXT NOT NULL,
+  phone TEXT,
   role TEXT NOT NULL CHECK (role IN ('admin', 'supervisor', 'cleaner')),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   password_record TEXT,
@@ -29,9 +30,11 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_record TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_ci_uq
   ON users (LOWER(username));
+CREATE INDEX IF NOT EXISTS users_phone_idx ON users (phone) WHERE phone IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS locations (
   id TEXT PRIMARY KEY,
@@ -95,6 +98,8 @@ CREATE INDEX IF NOT EXISTS task_instances_due_date_idx
 
 CREATE INDEX IF NOT EXISTS task_instances_assignee_due_date_idx
   ON task_instances (assigned_to, due_date);
+CREATE INDEX IF NOT EXISTS task_instances_due_status_idx ON task_instances (due_date, status);
+CREATE INDEX IF NOT EXISTS task_instances_parent_idx ON task_instances (parent_instance_id) WHERE parent_instance_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS task_instances_sop_due_date_idx
   ON task_instances (sop_item_id, due_date);

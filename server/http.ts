@@ -426,6 +426,100 @@ app.get("/api/locations", requireAuth, asyncRoute(async (_req, res) => {
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
 }));
 
+app.post("/api/zones", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const locationId = typeof body.location_id === "string" ? body.location_id : "";
+  if (!name || !locationId) {
+    res.status(400).json({ error: "name and location_id are required" }); return;
+  }
+  if (body.sort_order !== undefined && !Number.isFinite(Number(body.sort_order))) {
+    res.status(400).json({ error: "sort_order must be numeric" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const location = await client.query("SELECT id FROM locations WHERE id = $1", [locationId]);
+    if (location.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown location" }); return;
+    }
+    const responsibleId = typeof body.responsible_employee_id === "string" ? body.responsible_employee_id : null;
+    if (responsibleId) {
+      const user = await client.query("SELECT id FROM users WHERE id = $1", [responsibleId]);
+      if (user.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Unknown responsible employee" }); return;
+      }
+    }
+    const id = "z_" + randomBytes(8).toString("hex");
+    const now = new Date().toISOString();
+    const zone = { ...body, id, name, location_id: locationId, responsible_employee_id: responsibleId, created_at: now };
+    await client.query(
+      "INSERT INTO zones (id, location_id, name, responsible_employee_id, raw_data) VALUES ($1,$2,$3,$4,$5::jsonb)",
+      [id, locationId, name, responsibleId, JSON.stringify(zone)],
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ data: zone });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.patch("/api/zones/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  const allowed = new Set(["name", "location_id", "code", "floor", "responsible_employee_id", "cover_image_url", "sort_order"]);
+  for (const key of Object.keys(body)) {
+    if (!allowed.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query("SELECT id, raw_data FROM zones WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Zone not found" }); return;
+    }
+    const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
+      ? selected.rows[0].raw_data as Record<string, unknown> : {};
+    const zone = { ...current, ...body, id: req.params.id };
+    if (typeof zone.name !== "string" || !zone.name.trim() || typeof zone.location_id !== "string") {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Zone name and location_id are required" }); return;
+    }
+    const location = await client.query("SELECT id FROM locations WHERE id = $1", [zone.location_id]);
+    if (location.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown location" }); return;
+    }
+    if (typeof zone.responsible_employee_id === "string" && zone.responsible_employee_id) {
+      const user = await client.query("SELECT id FROM users WHERE id = $1", [zone.responsible_employee_id]);
+      if (user.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Unknown responsible employee" }); return;
+      }
+    }
+    await client.query(
+      "UPDATE zones SET location_id = $2, name = $3, responsible_employee_id = $4, raw_data = $5::jsonb WHERE id = $1",
+      [req.params.id, zone.location_id, zone.name, zone.responsible_employee_id || null, JSON.stringify(zone)],
+    );
+    await client.query("COMMIT");
+    res.json({ data: zone });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.get("/api/operational-tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
   const result = await pool.query("SELECT id, raw_data FROM operational_tasks ORDER BY title, id");
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });

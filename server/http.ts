@@ -1019,6 +1019,187 @@ app.get("/api/audit-logs", requireAuth, asyncRoute(async (req, res) => {
   });
 }));
 
+const taskTemplateEditableFields = new Set([
+  "title", "description", "goal", "task_code", "category", "tools_required",
+  "frequency", "recurrence_days", "scheduled_time", "scheduled_times",
+  "zone_id", "default_assignee_id", "is_active",
+  "requires_photo_before", "requires_photo_after", "requires_supervisor_approval",
+  "requires_gps", "requires_signature", "is_reopenable", "auto_escalate_if_late",
+  "estimated_duration_minutes", "reference_image_url", "guide_image_url",
+]);
+
+app.get("/api/task-templates", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
+  const result = await pool.query("SELECT id, raw_data FROM task_templates ORDER BY task_code, id");
+  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.post("/api/task-templates", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  for (const key of Object.keys(body)) {
+    if (!taskTemplateEditableFields.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  const taskCode = typeof body.task_code === "string" ? body.task_code.trim() : "";
+  const zoneId = typeof body.zone_id === "string" ? body.zone_id : "";
+  if (!title || title.length > 300 || !taskCode || taskCode.length > 80 || !zoneId) {
+    res.status(400).json({ error: "title, task_code and zone_id are required" }); return;
+  }
+  if (body.recurrence_days !== undefined && !Array.isArray(body.recurrence_days)) {
+    res.status(400).json({ error: "recurrence_days must be an array" }); return;
+  }
+  if (body.scheduled_times !== undefined && !Array.isArray(body.scheduled_times)) {
+    res.status(400).json({ error: "scheduled_times must be an array" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const zone = await client.query("SELECT id FROM zones WHERE id = $1", [zoneId]);
+    if (zone.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown task template zone" }); return;
+    }
+    const defaultAssignee = typeof body.default_assignee_id === "string" ? body.default_assignee_id : null;
+    if (defaultAssignee) {
+      const eligible = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [defaultAssignee],
+      );
+      if (eligible.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Default assignee must be an active cleaner" }); return;
+      }
+    }
+    const now = new Date().toISOString();
+    const id = "tpl_" + randomBytes(8).toString("hex");
+    const template = {
+      ...body, id, title, task_code: taskCode, zone_id: zoneId,
+      recurrence_days: Array.isArray(body.recurrence_days) ? body.recurrence_days : [],
+      scheduled_times: Array.isArray(body.scheduled_times) ? body.scheduled_times : [],
+      is_active: typeof body.is_active === "boolean" ? body.is_active : true,
+      created_at: now, updated_at: now,
+    };
+    await client.query(
+      "INSERT INTO task_templates (id, zone_id, task_code, title, category, is_active, raw_data, created_at, updated_at) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz)",
+      [id, zoneId, taskCode, title, typeof body.category === "string" ? body.category : null,
+        template.is_active, JSON.stringify(template), now, now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "task_template_created", JSON.stringify({ task_template_id: id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "task_template_created", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ data: template });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.patch("/api/task-templates/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  for (const key of Object.keys(body)) {
+    if (!taskTemplateEditableFields.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  if (Object.keys(body).length === 0) {
+    res.status(400).json({ error: "At least one task template field is required" }); return;
+  }
+  if (body.recurrence_days !== undefined && !Array.isArray(body.recurrence_days)) {
+    res.status(400).json({ error: "recurrence_days must be an array" }); return;
+  }
+  if (body.scheduled_times !== undefined && !Array.isArray(body.scheduled_times)) {
+    res.status(400).json({ error: "scheduled_times must be an array" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query("SELECT id, raw_data FROM task_templates WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Task template not found" }); return;
+    }
+    const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
+      ? selected.rows[0].raw_data as Record<string, unknown> : {};
+    const now = new Date().toISOString();
+    const merged = { ...current, ...body, id: req.params.id, updated_at: now };
+    if (typeof merged.title !== "string" || !merged.title.trim() ||
+        typeof merged.task_code !== "string" || !merged.task_code.trim() ||
+        typeof merged.zone_id !== "string" || !merged.zone_id) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Task template title, task_code and zone_id are required" }); return;
+    }
+    const zone = await client.query("SELECT id FROM zones WHERE id = $1", [merged.zone_id]);
+    if (zone.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown task template zone" }); return;
+    }
+    if (typeof merged.default_assignee_id === "string" && merged.default_assignee_id) {
+      const eligible = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [merged.default_assignee_id],
+      );
+      if (eligible.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Default assignee must be an active cleaner" }); return;
+      }
+    }
+    await client.query(
+      "UPDATE task_templates SET zone_id = $2, task_code = $3, title = $4, category = $5, is_active = $6, raw_data = $7::jsonb, updated_at = $8::timestamptz WHERE id = $1",
+      [req.params.id, merged.zone_id, merged.task_code, merged.title, merged.category || null,
+        merged.is_active !== false, JSON.stringify(merged), now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "task_template_updated", JSON.stringify({ task_template_id: req.params.id, changed_fields: Object.keys(body), actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "task_template_updated", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ data: merged });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.delete("/api/task-templates/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const deleted = await client.query("DELETE FROM task_templates WHERE id = $1 RETURNING id", [req.params.id]);
+    if (deleted.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Task template not found" }); return;
+    }
+    const now = new Date().toISOString();
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "task_template_deleted", JSON.stringify({ task_template_id: req.params.id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "task_template_deleted", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ success: true });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 const sopEditableFields = new Set([
   "title", "description", "goal", "task_code", "category", "tools_required",
   "frequency", "recurrence_days", "scheduled_time", "scheduled_times",

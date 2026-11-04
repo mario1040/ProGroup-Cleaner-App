@@ -389,8 +389,12 @@ export async function uploadPhoto(blobOrBase64: Blob | string, path: string): Pr
   return result.secure_url;
 }
 
-export async function deletePhoto(path: string): Promise<void> {
-  if (path) console.info("[Cloudinary] Photo deletion requires server-side signed cleanup:", path);
+export async function deletePhoto(publicId: string, taskId: string): Promise<void> {
+  if (!publicId || !taskId) return;
+  await apiRequest("/api/media/delete", {
+    method: "POST",
+    body: jsonBody({ public_id: publicId, task_id: taskId }),
+  });
 }
 
 export function compressImage(

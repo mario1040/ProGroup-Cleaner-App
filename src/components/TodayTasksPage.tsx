@@ -18,7 +18,7 @@ import {
   X
 } from "lucide-react";
 import { Profile, TaskInstance, Zone, TaskTemplate } from "../types";
-import { getTasks, listenTodayTasks, updateTask, getLocalDateString, deletePhoto } from "../lib/api";
+import { getTasks, listenTodayTasks, updateTask, getLocalDateString, deletePhoto } from "../lib/api-postgres";
 import { isOnline } from "../lib/offlineManager";
 import { isUsableImageUrl } from "../lib/cloudinary";
 import PhotoCapture from "./PhotoCapture";

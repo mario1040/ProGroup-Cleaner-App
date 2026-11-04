@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Camera, RefreshCw, Upload, CheckCircle, Loader2, AlertCircle, Trash2, ShieldCheck } from "lucide-react";
 import { uploadToCloudinary, recordOrphanCandidate } from "../lib/cloudinary";
-import { compressImage } from "../lib/api";
+import { compressImage } from "../lib/api-postgres";
 
 interface PhotoCaptureProps {
   label: string;

@@ -11,7 +11,7 @@ import {
   Calendar
 } from "lucide-react";
 import { Profile } from "../types";
-import { getKpis, KpiSummary } from "../lib/api";
+import { getKpis, KpiSummary } from "../lib/api-postgres";
 import ProfessorLogo from "./ProfessorLogo";
 
 interface MyKpiPageProps {

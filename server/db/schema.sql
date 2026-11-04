@@ -131,3 +131,59 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions (user_id);
 CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions (expires_at);
+
+-- Additional normalized operational entities. Original source JSON remains preserved.
+CREATE TABLE IF NOT EXISTS operational_tasks (
+  id TEXT PRIMARY KEY,
+  zone_id TEXT,
+  title TEXT NOT NULL,
+  description TEXT,
+  responsible_employee_id TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS operational_tasks_zone_idx ON operational_tasks (zone_id);
+
+CREATE TABLE IF NOT EXISTS device_switches (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  zone_id TEXT,
+  panel_location TEXT,
+  raw_data JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS device_switches_zone_idx ON device_switches (zone_id);
+
+CREATE TABLE IF NOT EXISTS kpi_snapshots (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT,
+  period_type TEXT,
+  period_start DATE,
+  period_end DATE,
+  tasks_assigned INTEGER,
+  tasks_completed_on_time INTEGER,
+  tasks_late INTEGER,
+  tasks_reworked INTEGER,
+  compliance_rate NUMERIC,
+  avg_execution_time_minutes NUMERIC,
+  quality_score NUMERIC,
+  supervisor_rating NUMERIC,
+  raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  computed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS kpi_snapshots_profile_period_idx
+  ON kpi_snapshots (profile_id, period_start, period_end);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,
+  action TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS audit_logs_task_created_idx
+  ON audit_logs (task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs (created_at DESC);

@@ -170,15 +170,15 @@ async function insertNormalizedDocument(
   if (collectionName === "users") {
     await client.query(
       "INSERT INTO users " +
-        "(id, username, full_name, role, is_active, password_record, raw_data, created_at, updated_at) " +
-        "VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::timestamptz, $9::timestamptz) " +
+        "(id, username, full_name, phone, role, is_active, password_record, raw_data, created_at, updated_at) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::timestamptz, $10::timestamptz) " +
         "ON CONFLICT (id) DO UPDATE SET username = EXCLUDED.username, " +
-        "full_name = EXCLUDED.full_name, role = EXCLUDED.role, " +
+        "full_name = EXCLUDED.full_name, phone = EXCLUDED.phone, role = EXCLUDED.role, " +
         "is_active = EXCLUDED.is_active, " +
         "password_record = COALESCE(EXCLUDED.password_record, users.password_record), " +
         "raw_data = EXCLUDED.raw_data, updated_at = EXCLUDED.updated_at",
       [
-        id, asString(data.username), asString(data.full_name), asString(data.role),
+        id, asString(data.username), asString(data.full_name), asString(data.phone), asString(data.role),
         asBoolean(data.is_active), asString(data.password), JSON.stringify(safeData),
         asDate(data.created_at), asDate(data.updated_at),
       ],

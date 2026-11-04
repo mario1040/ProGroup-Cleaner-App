@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getArabicDayName, getDaysDiff, getSopOccurrencesForDate, generateTaskInstanceId } from '../lib/api';
+import { getArabicDayName, getDaysDiff, getSopOccurrencesForDate, generateTaskInstanceId } from '../lib/task-utils';
 import { SOPItem } from '../types';
 
 describe('Recurrence Engine & Arabic Day Mapping', () => {

@@ -7,6 +7,11 @@ on:
       - "server/**"
       - "package.json"
       - "tsconfig.json"
+      - "Dockerfile"
+      - "docker-compose.naris.yml"
+      - "nginx/**"
+      - ".env.naris.example"
+      - ".dockerignore"
       - ".github/workflows/task-engine-ci.yml"
   push:
     branches: [feat/postgres-task-engine]
@@ -52,3 +57,11 @@ jobs:
         run: npm run lint
       - name: Frontend production build
         run: npm run build
+      - name: Validate isolated Compose configuration
+        run: |
+          printf "%s\\n" "NARIS_DB_USER=naris_ci" "NARIS_DB_PASSWORD=ci_only_0123456789abcdef0123456789abcdef0123456789abcdef" "NARIS_WEB_PORT=8081" "APP_ALLOWED_ORIGINS=http://localhost:8081" > .env.naris
+          docker compose --env-file .env.naris -f docker-compose.naris.yml config -q
+      - name: Build API container image
+        run: docker build --target api -t naris-api:ci .
+      - name: Build frontend container image
+        run: docker build --target web -t naris-web:ci .

@@ -163,6 +163,37 @@ async function insertGenericDocument(
   );
 }
 
+async function upsertImportedTaskMedia(
+  client: PoolClient,
+  taskId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const photos = isRecord(data.photos) ? data.photos : {};
+  for (const side of ["before", "after"] as const) {
+    const prefix = side === "before" ? "photo_before" : "photo_after";
+    const urlCandidates = side === "before"
+      ? [data.photo_before_url, photos.before, photos.before_url, data.before_photo_url, data.before_photo, data.photoBefore]
+      : [data.photo_after_url, photos.after, photos.after_url, data.after_photo_url, data.after_photo, data.photoAfter];
+    const secureUrl = urlCandidates.find((value): value is string =>
+      typeof value === "string" && value.startsWith("https://"));
+    if (!secureUrl) continue;
+    const publicId = asString(data[prefix + "_public_id"]);
+    const provider = secureUrl.includes("res.cloudinary.com") ? "cloudinary" : "legacy_external";
+    await client.query(
+      "INSERT INTO task_media (task_id, side, storage_provider, public_id, secure_url, mime_type, byte_size, captured_at, uploaded_at, metadata) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz,$10::jsonb) " +
+      "ON CONFLICT (task_id, side) DO UPDATE SET storage_provider = EXCLUDED.storage_provider, " +
+      "public_id = COALESCE(EXCLUDED.public_id, task_media.public_id), secure_url = EXCLUDED.secure_url, " +
+      "mime_type = EXCLUDED.mime_type, byte_size = EXCLUDED.byte_size, captured_at = EXCLUDED.captured_at, " +
+      "uploaded_at = EXCLUDED.uploaded_at, metadata = EXCLUDED.metadata, updated_at = NOW()",
+      [taskId, side, provider, publicId, secureUrl,
+        asString(data[prefix + "_mime_type"]), typeof data[prefix + "_size"] === "number" ? data[prefix + "_size"] : null,
+        asDate(data[prefix + "_taken_at"]), asDate(data[prefix + "_uploaded_at"]),
+        JSON.stringify({ imported_from: "task_instances", legacy_side: side })],
+    );
+  }
+}
+
 async function insertNormalizedDocument(
   client: PoolClient,
   collectionName: string,
@@ -274,6 +305,7 @@ async function insertNormalizedDocument(
         JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
       ],
     );
+    await upsertImportedTaskMedia(client, id, data);
     return;
   }
 

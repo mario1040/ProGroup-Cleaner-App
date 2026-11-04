@@ -1,142 +1,126 @@
-# Naris Ops PostgreSQL Migration Foundation
+# Naris Ops — PostgreSQL migration and API
 
-This is an isolated backend foundation for the Firestore-to-PostgreSQL migration. The existing React app and Firebase production data are not modified by these tools.
+This branch moves the application data layer from browser-side Firestore access to a PostgreSQL-backed HTTP API. The frontend uses `src/lib/api-postgres.ts`; the original Firebase adapter is retained in the repository as a reference/rollback artifact but is not imported by the active application entry points. Do not remove the source Firestore project until the migration, reconciliation, and production cutover have been signed off.
 
-## Current task-generator compatibility
+## Architecture
 
-The planner mirrors the recurring-task behavior in `src/lib/api.ts`:
+- React/Vite frontend calls the Express API using same-origin `/api` routes.
+- Express API connects to a dedicated PostgreSQL database named `naris_ops`.
+- Cloudinary remains the image host. PostgreSQL stores task/SOP image URLs and the original metadata in JSONB.
+- The importer keeps an archival copy of every exported top-level Firestore document in `firestore_documents`, while populating normalized tables for application queries.
+- Firebase must remain available as the source/rollback until production data has been reconciled and the new system has passed live acceptance tests.
 
-1. Only active SOP items are considered.
-2. `scheduled_times` wins; otherwise `scheduled_time`; otherwise `09:00`.
-3. Daily and three-times-daily frequencies create one occurrence per configured time.
-4. Every-other-day uses the SOP `created_at` date as its anchor (legacy fallback: `2026-07-01`).
-5. Weekly frequencies use the Arabic weekday in `recurrence_days`.
-6. Assignment priority is default SOP assignee, then zone responsible employee, then least task count for that date.
-7. Only active users with role `cleaner` are eligible.
-8. Workload ties are resolved by employee ID.
-9. IDs retain the existing `ti_rec_<sopId>_<YYYY-MM-DD>_<index>` format and the legacy no-index ID is recognized for the first occurrence.
+## Safety boundary
 
-The old generator does not filter by `work_days` or shift times, so this compatibility implementation intentionally does not silently change that policy.
+The API, importer, and task generator validate the target database name and accept only `naris_ops`. Do not point these tools at `marketing_ops`, `evolution`, or any other existing database. Use a dedicated least-privilege PostgreSQL role for the application; do not use the PostgreSQL superuser as the runtime account.
 
-## Database setup
+## Database schema
 
-Create/use a dedicated PostgreSQL database (for example, `naris_ops`) and apply the schema:
+Apply the schema to the dedicated database:
 
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/schema.sql
 ```
 
-The schema includes:
-- `firestore_documents`: archival mirror for all source collections, including collections not yet normalized.
-- normalized `users`, `locations`, `zones`, `sop_items`, and `task_instances` tables for the first backend slice.
-- `task_generation_runs` for generator execution history.
+The schema contains normalized operational tables for users, sessions, locations, zones, SOP items, task instances, operational tasks, device switches, KPI snapshots, audit logs, and task-generation runs. The generic `firestore_documents` archive preserves source fields and documents not yet represented by dedicated relational columns. Legacy template/SOP references remain text where the source audit found historical orphan references; the importer does not invent replacement relationships.
 
-Firestore document IDs are preserved. Legacy template/SOP references remain text rather than strict foreign keys because the live audit found historical references that do not match current master records.
-
-User password records are kept in the server-only `users.password_record` column. They are excluded from `raw_data` and from the generic archive table. The importer recognizes the existing salted SHA-256 format without printing any password values. It blocks import if plaintext password records are found; rotate those credentials in the source system before retrying.
+User password records are stored only in the server-side `users.password_record` column. They are removed from the JSON archive and public API responses. The importer validates the existing salted SHA-256 format and rejects plaintext records.
 
 ## Firestore backup import
 
-The importer reads the existing REST backup directory created in Cloud Shell. It is page-based and idempotent, so it can be rerun safely after a failed page.
-
-First run a read-only validation (no database connection or writes):
+The importer consumes the REST backup directory created in Cloud Shell. It supports a read-only dry run and page-level idempotent imports.
 
 ```bash
 npm install --legacy-peer-deps
-npm run data:import-firestore -- --dry-run
-```
-
-If the backup is stored elsewhere:
-
-```bash
 npm run data:import-firestore -- --dry-run --backup-dir "$HOME/naris_ops_firestore_backup"
 ```
 
-Review the aggregate counts, duplicate-username check, and password-format audit. Do not share the backup files or user records in chat.
-
-After the dry run is clean and the PostgreSQL database is ready:
+Review collection counts, duplicate usernames, required fields, relationship warnings, and password-format audit before importing. Then, only after the target database has been independently verified:
 
 ```bash
-npm run data:import-firestore
+npm run data:import-firestore -- --backup-dir "$HOME/naris_ops_firestore_backup"
 ```
 
-The import stores all top-level collections in `firestore_documents`. It additionally populates the five normalized tables used by the task engine. Other collections remain safely preserved in the archive table until their normalized schemas and APIs are implemented.
+The existing verified export contains 2,920 top-level documents across 10 collections. It is not a point-in-time Firestore snapshot and does not, by itself, prove Firebase Auth, subcollections, Storage objects, security rules, or indexes have been migrated. Re-export and reconcile during a final write freeze before cutover.
 
-## Run the recurring task generator
+## HTTP API
 
-Configure server-only variables in `.env`:
+Start the API after setting server-only environment variables:
 
 ```env
-DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/naris_ops
+DATABASE_URL=postgresql://APP_USER:APP_PASSWORD@POSTGRES_HOST:5432/naris_ops
+API_PORT=4000
+PG_POOL_MAX=10
+PG_SSL=false
 APP_TIME_ZONE=Africa/Cairo
+APP_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+SESSION_COOKIE_SAMESITE=Lax
 ```
 
-Then run:
+```bash
+npm run start:api
+```
+
+Implemented routes:
+
+- Health: `GET /health/live`, `GET /health/ready`.
+- Auth: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+- Users: list, create, update, reset password, and reassign pending tasks from an inactive cleaner.
+- Zones: list, create, and update; locations are read-only.
+- SOPs: list, create, update, and delete.
+- Tasks: date/range list, create, update lifecycle/photo fields, supervisor approve, and reject/create rework.
+- Operational tasks and device switches: authenticated read-only routes.
+- KPI: calculated summaries and stored KPI snapshot reads.
+- Audit logs and system validation: authenticated reads.
+
+The API uses opaque random session tokens; only token hashes are stored in PostgreSQL. Cookies are HTTP-only, have a 12-hour lifetime, and are revocable. SameSite defaults to Lax. Configure the production origin allowlist and HTTPS before deployment. Do not expose `DATABASE_URL`, password records, or Cloudinary API secrets to the browser.
+
+## Daily recurring-task generation
+
+The generator uses the same recurrence and assignment policy as the existing app: active SOPs only; configured scheduled times; Arabic weekday recurrence; default SOP assignee, then zone responsible employee, then least-loaded active cleaner. It intentionally does not add shift/work-day filtering that the source implementation did not have.
+
+The API process checks the current business date at startup and every 60 seconds. It generates the day's recurring tasks once a successful run exists. Generation uses a transaction, a per-date advisory lock, deterministic task IDs, and a uniqueness index to protect against duplicate tasks across concurrent API instances. Failed runs are logged and retried on a later check.
+
+Manual one-off generation remains available:
 
 ```bash
 npm run tasks:generate
 npm run tasks:generate -- 2026-11-04
 ```
 
-The default date is calculated in `APP_TIME_ZONE` (defaults to `Africa/Cairo`).
+## Photo handling
 
-## Scheduling
+The frontend uploads photos directly to Cloudinary using an unsigned upload preset, then saves the resulting secure URL and available capture metadata with the task. Configure only the Cloudinary cloud name and unsigned preset in frontend build variables. Never place the Cloudinary API secret in frontend variables. Server-side signed deletion/cleanup and durable public-ID reconciliation remain a separate operational follow-up; the current client does not delete Cloudinary assets.
 
-Run the generator once daily from the host scheduler only after import validation and a same-date comparison against Firebase. Example cron (03:00 Cairo server time):
+## Verification
 
-```cron
-0 3 * * * cd /path/to/ProGroup-Cleaner-App && npm run tasks:generate >> /var/log/naris-task-generator.log 2>&1
-```
+CI runs against an ephemeral PostgreSQL 17 service and performs:
 
-Do not enable this cron against production until the migrated data has been imported and the generated plan has been compared with Firebase for the same date.
+1. Schema application and smoke checks.
+2. Task-engine unit tests.
+3. PostgreSQL HTTP integration tests for login/session, role restrictions, task lifecycle/photo requirements, supervisor approval/rework, KPI output, SOP/user creation, system validation, and idempotent recurring-task generation.
+4. TypeScript check.
+5. Frontend production build.
 
-## Safety
-
-- The importer uses one transaction per backup page and upserts by original Firestore document path.
-- User password values are excluded from generic JSON archives and are never printed.
-- Generation runs in a PostgreSQL transaction and uses a per-date advisory lock.
-- Deterministic IDs plus a unique recurring-occurrence index protect against duplicate generation.
-- The generator writes only recurring tasks; rework and one-time tasks are outside this generator.
-- Every generation attempt is recorded in `task_generation_runs`.
-- Neither importer nor generator writes to Firebase.
-
-
-## HTTP API foundation (first backend slice)
-
-The branch now includes `server/http.ts` and the `start:api` script.
-
-Implemented endpoints:
-
-- `GET /health/live`: process liveness.
-- `GET /health/ready`: verifies PostgreSQL connectivity.
-- `POST /api/auth/login`: verifies the existing salted SHA-256 password record and creates a server-side session.
-- `POST /api/auth/logout`: revokes the current session.
-- `GET /api/auth/me`: returns the authenticated profile without password fields.
-- `GET /api/users`: admin/supervisor profile listing.
-- `GET /api/zones`: authenticated zone listing.
-- `GET /api/sop-items`: admin/supervisor SOP listing.
-- `GET /api/tasks?date=YYYY-MM-DD`: task listing; cleaners are restricted to their own assigned tasks. Admins and supervisors can see all tasks.
-
-Security foundation:
-
-- Random opaque session tokens; only SHA-256 token hashes are stored in `auth_sessions`.
-- HTTP-only session cookie, 12-hour expiry, and server-side revocation.
-- Login attempt throttling by source IP.
-- CORS origin allowlist via `APP_ALLOWED_ORIGINS`.
-- Production write requests require an allowlisted `Origin`; session cookies default to `SameSite=Lax` (`SESSION_COOKIE_SAMESITE=None` is allowed only over production HTTPS for a deliberately cross-site deployment).
-- `/health/ready` verifies the required core tables exist; task date ranges require both endpoints and are capped at 366 days.
-- Password records are never returned by API profile endpoints.
-- Database errors and SQL details are not returned to clients.
-
-Start locally after applying `server/db/schema.sql` and configuring the server-only `.env`:
+Local commands:
 
 ```bash
-npm run start:api
+npm test
+npm run lint
+npm run build
 ```
 
-This is an initial API slice, not yet a complete frontend cutover. The current React application still calls Firebase directly. Task mutations (start/complete/photo upload/approval/rework), full metadata CRUD, KPI/audit endpoints, and the frontend API adapter must be completed and tested before switching production traffic. Do not enable the PostgreSQL scheduler or remove Firebase during this phase.
+## Cutover checklist — do not skip
 
+1. Provision a separate `naris_ops` database on the chosen PostgreSQL server without modifying existing databases.
+2. Apply schema and verify health/readiness.
+3. Re-run the Firestore backup export after a controlled write freeze; preserve and verify the encrypted backup hash.
+4. Run importer dry-run, import into `naris_ops`, and reconcile counts and relationships.
+5. Migrate the 384 Base64 photo appearances to Cloudinary safely; reconcile every URL and retain a rollback copy. The number 384 is appearances, not unique assets.
+6. Verify all five users can authenticate, roles are correct, and no password values appear in API payloads/logs.
+7. Compare generated tasks for the same dates against Firestore, including every recurrence frequency and multiple scheduled times.
+8. Run acceptance tests on phones/tablets for cleaner and supervisor workflows, including poor connectivity and photo upload failures.
+9. Verify KPI definitions against known source calculations and audit-log coverage.
+10. Route production traffic only after sign-off. Keep Firebase intact and available for rollback until the agreed observation period ends.
 
-## Database target guard
-
-The API, Firestore importer and task scheduler validate the database name before opening a connection. They only accept a database named `naris_ops`. This is an intentional safety barrier so these tools cannot accidentally write to the existing marketing or Evolution databases. Use a dedicated least-privilege application role rather than the PostgreSQL superuser.
+This branch and CI do not create a database on the user's Windows/Docker host, deploy containers, configure DNS/TLS, or perform production cutover. Those steps are deliberately deferred until the code and data validation are approved.

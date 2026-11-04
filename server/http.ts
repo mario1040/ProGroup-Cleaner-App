@@ -290,6 +290,12 @@ app.post("/api/users", requireAuth, allowRoles("admin"), asyncRoute(async (req, 
   if (!username || !fullName || !["admin", "supervisor", "cleaner"].includes(String(role))) {
     res.status(400).json({ error: "username, full_name and a valid role are required" }); return;
   }
+  if (body.is_active !== undefined && typeof body.is_active !== "boolean") {
+    res.status(400).json({ error: "is_active must be boolean" }); return;
+  }
+  if (typeof body.phone === "string" && body.phone.length > 40) {
+    res.status(400).json({ error: "phone is too long" }); return;
+  }
   const suppliedPassword = typeof body.password === "string" ? body.password : "";
   if (suppliedPassword && suppliedPassword.length < 6) {
     res.status(400).json({ error: "Password must be at least 6 characters" }); return;
@@ -340,6 +346,15 @@ app.patch("/api/users/:id", requireAuth, allowRoles("admin"), asyncRoute(async (
   }
   if (body.role !== undefined && !["admin", "supervisor", "cleaner"].includes(String(body.role))) {
     res.status(400).json({ error: "Unsupported user role" }); return;
+  }
+  if (body.is_active !== undefined && typeof body.is_active !== "boolean") {
+    res.status(400).json({ error: "is_active must be boolean" }); return;
+  }
+  if (body.username !== undefined && (typeof body.username !== "string" || !body.username.trim())) {
+    res.status(400).json({ error: "username cannot be empty" }); return;
+  }
+  if (body.full_name !== undefined && (typeof body.full_name !== "string" || !body.full_name.trim())) {
+    res.status(400).json({ error: "full_name cannot be empty" }); return;
   }
   if (body.work_days !== undefined && !Array.isArray(body.work_days)) {
     res.status(400).json({ error: "work_days must be an array" }); return;

@@ -75,6 +75,10 @@ async function main(): Promise<void> {
   let tasksScanned = 0;
   let mediaMigrated = 0;
   let mediaIndexed = 0;
+  let plannedUploads = 0;
+  let plannedBase64 = 0;
+  let plannedExternalUrls = 0;
+  let plannedExistingCloudinary = 0;
   let failures = 0;
   try {
     const result = await pool.query<{ id: string; zone_id: string; raw_data: JsonRecord }>(
@@ -104,6 +108,12 @@ async function main(): Promise<void> {
         if (!source) continue;
         const kind = sourceKind(source);
         if (!apply) {
+          if (kind === "cloudinary") plannedExistingCloudinary += 1;
+          else {
+            plannedUploads += 1;
+            if (kind === "base64") plannedBase64 += 1;
+            else plannedExternalUrls += 1;
+          }
           process.stdout.write(JSON.stringify({
             mode: "dry-run", task_id: row.id, side, source_kind: kind,
             action: kind === "cloudinary" ? "index_metadata" : "upload_to_cloudinary",
@@ -175,6 +185,10 @@ async function main(): Promise<void> {
       tasks_scanned: tasksScanned,
       media_migrated_to_cloudinary: mediaMigrated,
       media_metadata_indexed: mediaIndexed,
+      planned_uploads: plannedUploads,
+      planned_base64_images: plannedBase64,
+      planned_external_urls: plannedExternalUrls,
+      planned_existing_cloudinary_urls: plannedExistingCloudinary,
       failures,
       remaining_base64_tasks: Number(remaining.rows[0]?.base64_tasks || 0),
       remaining_firebase_url_tasks: Number(remaining.rows[0]?.firebase_url_tasks || 0),

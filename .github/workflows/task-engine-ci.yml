@@ -49,7 +49,9 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --legacy-peer-deps --no-audit --no-fund
-      - name: Apply and verify PostgreSQL schema
+      - name: Apply PostgreSQL migration
+        run: npx tsx server/db/migrate.ts
+      - name: Verify PostgreSQL schema
         run: npx tsx server/db/schema-smoke.ts
       - name: Run task-engine tests
         run: npx vitest run server

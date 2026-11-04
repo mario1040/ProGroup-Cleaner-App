@@ -856,7 +856,7 @@ const sopEditableFields = new Set([
   "frequency", "recurrence_days", "scheduled_time", "scheduled_times",
   "zone_id", "default_assignee_id", "is_active",
   "requires_photo_before", "requires_photo_after", "requires_supervisor_approval",
-  "requires_gps", "estimated_duration_minutes", "reference_image_url", "guide_image_url",
+  "requires_gps", "requires_signature", "is_reopenable", "auto_escalate_if_late", "estimated_duration_minutes", "reference_image_url", "guide_image_url",
 ]);
 
 app.post("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {

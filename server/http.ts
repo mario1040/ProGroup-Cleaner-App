@@ -137,7 +137,7 @@ function requireSameOrigin(req: Request, res: Response, next: NextFunction): voi
   next();
 }
 function isValidDateOnly(value: string): boolean {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(value + "T00:00:00.000Z");
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
@@ -282,10 +282,10 @@ app.get("/api/tasks", requireAuth, asyncRoute(async (req, res) => {
   const date = typeof req.query.date === "string" ? req.query.date : null;
   const start = typeof req.query.startDate === "string" ? req.query.startDate : null;
   const end = typeof req.query.endDate === "string" ? req.query.endDate : null;
-  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  if (date && !isValidDateOnly(date)) {
     res.status(400).json({ error: "date must use YYYY-MM-DD" }); return;
   }
-  if ((start && !/^\d{4}-\d{2}-\d{2}$/.test(start)) || (end && !/^\d{4}-\d{2}-\d{2}$/.test(end))) {
+  if ((start && !isValidDateOnly(start)) || (end && !isValidDateOnly(end))) {
     res.status(400).json({ error: "Date range must use YYYY-MM-DD" }); return;
   }
   if ((start && !end) || (!start && end)) {

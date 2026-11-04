@@ -87,6 +87,38 @@ function validateUserPasswordRecord(value: unknown): "salted_sha256" | "legacy_p
     : "legacy_plaintext";
 }
 
+function validateNormalizedDocument(
+  collectionName: string,
+  data: Record<string, unknown>,
+): void {
+  if (collectionName === "users") {
+    const role = asString(data.role);
+    if (!asString(data.username) || !asString(data.full_name) || !role) {
+      throw new Error("A user record is missing required account fields.");
+    }
+    if (!["admin", "supervisor", "cleaner"].includes(role)) {
+      throw new Error("A user record contains an unsupported role value.");
+    }
+  } else if (collectionName === "locations" && !asString(data.name)) {
+    throw new Error("A location record is missing its name.");
+  } else if (collectionName === "zones" && !asString(data.name)) {
+    throw new Error("A zone record is missing its name.");
+  } else if (collectionName === "sop_items") {
+    if (!asString(data.title) || !asString(data.zone_id) || !asString(data.frequency)) {
+      throw new Error("An SOP record is missing required scheduling fields.");
+    }
+  } else if (collectionName === "task_instances") {
+    if (
+      !asString(data.zone_id) ||
+      !asString(data.assigned_to) ||
+      !asString(data.title) ||
+      !asDateOnly(data.due_date)
+    ) {
+      throw new Error("A task instance is missing required task fields.");
+    }
+  }
+}
+
 async function insertGenericDocument(
   client: PoolClient,
   collectionName: string,
@@ -120,15 +152,6 @@ async function insertNormalizedDocument(
   const safeData = sanitizeCollectionData(collectionName, data);
 
   if (collectionName === "users") {
-    const username = asString(data.username);
-    const fullName = asString(data.full_name);
-    const role = asString(data.role);
-    if (!username || !fullName || !role) {
-      throw new Error("A user record is missing required account fields.");
-    }
-    if (!["admin", "supervisor", "cleaner"].includes(role)) {
-      throw new Error("A user record contains an unsupported role value.");
-    }
     await client.query(
       "INSERT INTO users " +
         "(id, username, full_name, role, is_active, password_record, raw_data, created_at, updated_at) " +
@@ -139,46 +162,40 @@ async function insertNormalizedDocument(
         "password_record = COALESCE(EXCLUDED.password_record, users.password_record), " +
         "raw_data = EXCLUDED.raw_data, updated_at = EXCLUDED.updated_at",
       [
-        id, username, fullName, role, asBoolean(data.is_active), asString(data.password),
-        JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
+        id, asString(data.username), asString(data.full_name), asString(data.role),
+        asBoolean(data.is_active), asString(data.password), JSON.stringify(safeData),
+        asDate(data.created_at), asDate(data.updated_at),
       ],
     );
     return;
   }
 
   if (collectionName === "locations") {
-    const name = asString(data.name);
-    if (!name) throw new Error("A location record is missing its name.");
     await client.query(
       "INSERT INTO locations (id, name, address, raw_data) VALUES ($1, $2, $3, $4::jsonb) " +
         "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, " +
         "address = EXCLUDED.address, raw_data = EXCLUDED.raw_data",
-      [id, name, asString(data.address), JSON.stringify(safeData)],
+      [id, asString(data.name), asString(data.address), JSON.stringify(safeData)],
     );
     return;
   }
 
   if (collectionName === "zones") {
-    const name = asString(data.name);
-    if (!name) throw new Error("A zone record is missing its name.");
     await client.query(
       "INSERT INTO zones (id, location_id, name, responsible_employee_id, raw_data) " +
         "VALUES ($1, $2, $3, $4, $5::jsonb) " +
         "ON CONFLICT (id) DO UPDATE SET location_id = EXCLUDED.location_id, " +
         "name = EXCLUDED.name, responsible_employee_id = EXCLUDED.responsible_employee_id, " +
         "raw_data = EXCLUDED.raw_data",
-      [id, asString(data.location_id), name, asString(data.responsible_employee_id), JSON.stringify(safeData)],
+      [
+        id, asString(data.location_id), asString(data.name),
+        asString(data.responsible_employee_id), JSON.stringify(safeData),
+      ],
     );
     return;
   }
 
   if (collectionName === "sop_items") {
-    const title = asString(data.title);
-    const zoneId = asString(data.zone_id);
-    const frequency = asString(data.frequency);
-    if (!title || !zoneId || !frequency) {
-      throw new Error("An SOP record is missing required scheduling fields.");
-    }
     await client.query(
       "INSERT INTO sop_items " +
         "(id, title, task_code, zone_id, frequency, recurrence_days, scheduled_time, " +
@@ -191,26 +208,17 @@ async function insertNormalizedDocument(
         "is_active = EXCLUDED.is_active, raw_data = EXCLUDED.raw_data, " +
         "created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at",
       [
-        id, title, asString(data.task_code), zoneId, frequency,
-        JSON.stringify(asStringArray(data.recurrence_days)), asString(data.scheduled_time),
-        JSON.stringify(asStringArray(data.scheduled_times)), asString(data.default_assignee_id),
-        asBoolean(data.is_active), JSON.stringify(safeData),
-        asDate(data.created_at), asDate(data.updated_at),
+        id, asString(data.title), asString(data.task_code), asString(data.zone_id),
+        asString(data.frequency), JSON.stringify(asStringArray(data.recurrence_days)),
+        asString(data.scheduled_time), JSON.stringify(asStringArray(data.scheduled_times)),
+        asString(data.default_assignee_id), asBoolean(data.is_active),
+        JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
       ],
     );
     return;
   }
 
   if (collectionName === "task_instances") {
-    const zoneId = asString(data.zone_id);
-    const assignedTo = asString(data.assigned_to);
-    const title = asString(data.title);
-    const dueDate = asDateOnly(data.due_date);
-    const taskType = asString(data.task_type) || "one_time";
-    const status = asString(data.status) || "pending";
-    if (!zoneId || !assignedTo || !title || !dueDate) {
-      throw new Error("A task instance is missing required task fields.");
-    }
     await client.query(
       "INSERT INTO task_instances " +
         "(id, template_id, sop_item_id, zone_id, assigned_to, assigned_by, task_type, " +
@@ -224,9 +232,11 @@ async function insertNormalizedDocument(
         "due_time = EXCLUDED.due_time, status = EXCLUDED.status, raw_data = EXCLUDED.raw_data, " +
         "created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at",
       [
-        id, asString(data.template_id), asString(data.sop_item_id), zoneId,
-        assignedTo, asString(data.assigned_by), taskType, asString(data.parent_instance_id),
-        title, asString(data.description), dueDate, asString(data.due_time), status,
+        id, asString(data.template_id), asString(data.sop_item_id), asString(data.zone_id),
+        asString(data.assigned_to), asString(data.assigned_by),
+        asString(data.task_type) || "one_time", asString(data.parent_instance_id),
+        asString(data.title), asString(data.description), asDateOnly(data.due_date),
+        asString(data.due_time), asString(data.status) || "pending",
         JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
       ],
     );
@@ -253,12 +263,11 @@ async function main(): Promise<void> {
   if (collections.length === 0) {
     throw new Error("No collection folders were found in the backup directory.");
   }
-
   if (!dryRun && !process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL environment variable is required.");
   }
-  const pool = dryRun ? null : new Pool({ connectionString: process.env.DATABASE_URL });
 
+  const pool = dryRun ? null : new Pool({ connectionString: process.env.DATABASE_URL });
   const summary = new Map<string, CollectionSummary>();
   const usernames = new Set<string>();
   let saltedPasswordRecords = 0;
@@ -293,6 +302,10 @@ async function main(): Promise<void> {
             const actualCollection = pathParts[pathParts.length - 2];
             const data = decodeFirestoreFields(document.fields);
 
+            if (pathParts.length === 2) {
+              validateNormalizedDocument(actualCollection, data);
+            }
+
             if (actualCollection === "users") {
               const username = asString(data.username);
               if (username) {
@@ -304,8 +317,14 @@ async function main(): Promise<void> {
               }
               const passwordState = validateUserPasswordRecord(data.password);
               if (passwordState === "salted_sha256") saltedPasswordRecords += 1;
-              else if (passwordState === "legacy_plaintext") legacyPasswordRecords += 1;
-              else missingPasswordRecords += 1;
+              else if (passwordState === "legacy_plaintext") {
+                legacyPasswordRecords += 1;
+                if (!dryRun) {
+                  throw new Error(
+                    "Legacy plaintext password records were detected. Rotate those passwords before importing.",
+                  );
+                }
+              } else missingPasswordRecords += 1;
             }
 
             if (client) {

@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
+import { assertNarisDatabaseUrl } from "./db/connection";
 
 interface FirestoreDocument {
   name: string;
@@ -263,11 +264,8 @@ async function main(): Promise<void> {
   if (collections.length === 0) {
     throw new Error("No collection folders were found in the backup directory.");
   }
-  if (!dryRun && !process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL environment variable is required.");
-  }
-
-  const pool = dryRun ? null : new Pool({ connectionString: process.env.DATABASE_URL });
+  const connectionString = dryRun ? undefined : assertNarisDatabaseUrl(process.env.DATABASE_URL);
+  const pool = dryRun ? null : new Pool({ connectionString });
   const summary = new Map<string, CollectionSummary>();
   const usernames = new Set<string>();
   let saltedPasswordRecords = 0;

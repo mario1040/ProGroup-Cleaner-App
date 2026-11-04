@@ -383,6 +383,10 @@ app.post("/api/tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRout
   if (taskType === "rework" && typeof body.parent_instance_id !== "string") {
     res.status(400).json({ error: "Rework tasks require parent_instance_id" }); return;
   }
+  if (body.estimated_duration_minutes !== undefined &&
+      (!Number.isFinite(Number(body.estimated_duration_minutes)) || Number(body.estimated_duration_minutes) < 0)) {
+    res.status(400).json({ error: "estimated_duration_minutes must be a non-negative number" }); return;
+  }
 
   const client = await pool.connect();
   try {
@@ -391,6 +395,13 @@ app.post("/api/tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRout
     if (zone.rowCount !== 1) {
       await client.query("ROLLBACK");
       res.status(400).json({ error: "Unknown task zone" }); return;
+    }
+    if (taskType === "rework") {
+      const parent = await client.query("SELECT id FROM task_instances WHERE id = $1", [body.parent_instance_id]);
+      if (parent.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Rework parent task does not exist" }); return;
+      }
     }
 
     let assignedTo = typeof body.assigned_to === "string" ? body.assigned_to : "";
@@ -733,7 +744,16 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    const merged = applyTaskUpdate(current, updates as Partial<TaskRecord>, now);
+    let merged: TaskRecord;
+    try {
+      merged = applyTaskUpdate(current, updates as Partial<TaskRecord>, now);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      res.status(422).json({
+        error: error instanceof Error ? error.message : "Task update validation failed",
+      });
+      return;
+    }
     const result = await client.query(
       "UPDATE task_instances SET assigned_to = $2, zone_id = $3, due_date = $4::date, " +
       "due_time = $5, status = $6, title = $7, description = $8, " +

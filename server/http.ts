@@ -1566,6 +1566,15 @@ app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {
       );
     }
     await client.query("DELETE FROM task_media WHERE task_id = $1 AND public_id = $2", [taskId, publicId]);
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    const now = new Date().toISOString();
+    await client.query(
+      "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+      "VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::timestamptz)",
+      [auditId, taskId, "task_media_deleted",
+        JSON.stringify({ actor_id: req.auth?.id, public_id: publicId }),
+        JSON.stringify({ id: auditId, task_id: taskId, action: "task_media_deleted", created_at: now }), now],
+    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);

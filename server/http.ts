@@ -373,7 +373,7 @@ app.patch("/api/users/:id", requireAuth, allowRoles("admin"), asyncRoute(async (
     ? req.body as Record<string, unknown> : {};
   const allowed = new Set([
     "username", "full_name", "role", "phone", "avatar_url", "is_active",
-    "shift_start", "shift_end", "work_days", "password",
+    "shift_start", "shift_end", "work_days", "password", "created_at", "updated_at",
   ]);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) {
@@ -596,7 +596,7 @@ app.post("/api/zones", requireAuth, allowRoles("admin", "supervisor"), asyncRout
 app.patch("/api/zones/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
     ? req.body as Record<string, unknown> : {};
-  const allowed = new Set(["name", "location_id", "code", "floor", "responsible_employee_id", "cover_image_url", "sort_order"]);
+  const allowed = new Set(["name", "location_id", "code", "floor", "responsible_employee_id", "cover_image_url", "sort_order", "created_at", "updated_at"]);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) {
       res.status(400).json({ error: "Field is not allowed: " + key }); return;
@@ -856,7 +856,7 @@ const sopEditableFields = new Set([
   "frequency", "recurrence_days", "scheduled_time", "scheduled_times",
   "zone_id", "default_assignee_id", "is_active",
   "requires_photo_before", "requires_photo_after", "requires_supervisor_approval",
-  "requires_gps", "requires_signature", "is_reopenable", "auto_escalate_if_late", "estimated_duration_minutes", "reference_image_url", "guide_image_url",
+  "requires_gps", "requires_signature", "is_reopenable", "auto_escalate_if_late", "estimated_duration_minutes", "reference_image_url", "guide_image_url", "created_at", "updated_at",
 ]);
 
 app.post("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {

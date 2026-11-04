@@ -281,6 +281,123 @@ app.get("/api/users", requireAuth, allowRoles("admin", "supervisor"), asyncRoute
   res.json({ data: result.rows.map((row) => publicProfile(row)) });
 }));
 
+app.post("/api/users", requireAuth, allowRoles("admin"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  const username = typeof body.username === "string" ? body.username.trim() : "";
+  const fullName = typeof body.full_name === "string" ? body.full_name.trim() : "";
+  const role = body.role;
+  if (!username || !fullName || !["admin", "supervisor", "cleaner"].includes(String(role))) {
+    res.status(400).json({ error: "username, full_name and a valid role are required" }); return;
+  }
+  const suppliedPassword = typeof body.password === "string" ? body.password : "";
+  if (suppliedPassword && suppliedPassword.length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters" }); return;
+  }
+  const generatedPassword = suppliedPassword || randomBytes(12).toString("base64url");
+  const id = "p_" + randomBytes(8).toString("hex");
+  const now = new Date().toISOString();
+  const raw = { ...body, id, username, full_name: fullName, role, is_active: body.is_active !== false, created_at: now };
+  delete raw.password;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "INSERT INTO users (id, username, full_name, role, is_active, password_record, raw_data, created_at) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz)",
+      [id, username, fullName, role, raw.is_active, hashPassword(generatedPassword), JSON.stringify(raw), now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "user_created", JSON.stringify({ user_id: id, role, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "user_created", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ profile: publicProfile({ ...raw, ...{ id, username, full_name: fullName, role, is_active: raw.is_active, raw_data: raw } }), generatedPassword });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    if (error instanceof Error && error.message.includes("users_username_ci_uq")) {
+      res.status(409).json({ error: "Username is already in use" }); return;
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.patch("/api/users/:id", requireAuth, allowRoles("admin"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  const allowed = new Set([
+    "username", "full_name", "role", "phone", "avatar_url", "is_active",
+    "shift_start", "shift_end", "work_days", "password",
+  ]);
+  for (const key of Object.keys(body)) {
+    if (!allowed.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  if (body.role !== undefined && !["admin", "supervisor", "cleaner"].includes(String(body.role))) {
+    res.status(400).json({ error: "Unsupported user role" }); return;
+  }
+  if (body.work_days !== undefined && !Array.isArray(body.work_days)) {
+    res.status(400).json({ error: "work_days must be an array" }); return;
+  }
+  if (body.password !== undefined &&
+      (typeof body.password !== "string" || body.password.length < 6)) {
+    res.status(400).json({ error: "Password must be at least 6 characters" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT id, username, full_name, role, is_active, password_record, raw_data FROM users WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "User not found" }); return;
+    }
+    const row = selected.rows[0];
+    const current = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {};
+    const merged = { ...current, ...body, id: row.id, updated_at: new Date().toISOString() } as Record<string, unknown>;
+    delete merged.password;
+    const passwordRecord = typeof body.password === "string" ? hashPassword(body.password) : row.password_record;
+    await client.query(
+      "UPDATE users SET username = $2, full_name = $3, role = $4, is_active = $5, " +
+      "password_record = $6, raw_data = $7::jsonb, updated_at = $8::timestamptz WHERE id = $1",
+      [req.params.id, merged.username || row.username, merged.full_name || row.full_name,
+        merged.role || row.role, merged.is_active !== false, passwordRecord,
+        JSON.stringify(merged), merged.updated_at],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "user_updated", JSON.stringify({ user_id: req.params.id, changed_fields: Object.keys(body), actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "user_updated", created_at: merged.updated_at }), merged.updated_at],
+    );
+    await client.query("COMMIT");
+    const profile = publicProfile({
+      id: req.params.id,
+      username: merged.username || row.username,
+      full_name: merged.full_name || row.full_name,
+      role: merged.role || row.role,
+      is_active: merged.is_active !== false,
+      raw_data: merged,
+    });
+    res.json({ profile });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    if (error instanceof Error && error.message.includes("users_username_ci_uq")) {
+      res.status(409).json({ error: "Username is already in use" }); return;
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.get("/api/zones", requireAuth, asyncRoute(async (_req, res) => {
   const result = await pool.query("SELECT id, location_id, name, responsible_employee_id, raw_data FROM zones ORDER BY id");
   res.json({ data: result.rows.map((row) => ({

@@ -210,7 +210,7 @@ async function insertNormalizedDocument(
         "ON CONFLICT (id) DO UPDATE SET username = EXCLUDED.username, " +
         "full_name = EXCLUDED.full_name, phone = EXCLUDED.phone, role = EXCLUDED.role, " +
         "is_active = EXCLUDED.is_active, " +
-        "password_record = COALESCE(EXCLUDED.password_record, users.password_record), " +
+        "password_record = COALESCE(users.password_record, EXCLUDED.password_record), " +
         "raw_data = EXCLUDED.raw_data, updated_at = EXCLUDED.updated_at",
       [
         id, asString(data.username), asString(data.full_name), asString(data.phone), asString(data.role),
@@ -381,12 +381,20 @@ async function main(): Promise<void> {
   }
 
   const collectionEntries = await readdir(backupDir, { withFileTypes: true });
-  const collections = collectionEntries
+  const allCollections = collectionEntries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
+  const onlyCollectionIndex = args.indexOf("--only-collection");
+  const onlyCollection = onlyCollectionIndex >= 0 ? args[onlyCollectionIndex + 1] : "";
+  if (onlyCollectionIndex >= 0 && (!onlyCollection || onlyCollection.startsWith("--"))) {
+    throw new Error("Pass a collection name after --only-collection.");
+  }
+  const collections = onlyCollection ? allCollections.filter((name) => name === onlyCollection) : allCollections;
   if (collections.length === 0) {
-    throw new Error("No collection folders were found in the backup directory.");
+    throw new Error(onlyCollection
+      ? "The requested collection folder was not found: " + onlyCollection
+      : "No collection folders were found in the backup directory.");
   }
   const connectionString = dryRun ? undefined : assertNarisDatabaseUrl(process.env.DATABASE_URL);
   const pool = dryRun ? null : new Pool({ connectionString });

@@ -120,6 +120,7 @@ describe("PostgreSQL HTTP integration", () => {
       [createdTaskIds, userIds],
     );
     await pool.query("DELETE FROM inventory_items WHERE id = ANY($1::text[])", [createdInventoryIds]);
+    await pool.query("DELETE FROM task_media WHERE task_id = ANY($1::text[])", [createdTaskIds]);
     await pool.query("DELETE FROM task_instances WHERE id = ANY($1::text[])", [createdTaskIds]);
     await pool.query("DELETE FROM task_generation_runs WHERE run_date = $1::date", ["2099-05-03"]);
     await pool.query("DELETE FROM task_templates WHERE id = ANY($1::text[])", [createdTemplateIds]);
@@ -155,6 +156,8 @@ describe("PostgreSQL HTTP integration", () => {
     const started = await api("/api/tasks/" + taskId, "PATCH", {
       status: "in_progress",
       photo_before_url: "https://res.cloudinary.com/demo/before.jpg",
+      photo_before_public_id: "task-photos/" + zoneId + "/" + taskId + "/before",
+      photo_before_mime_type: "image/jpeg", photo_before_size: 1024,
     }, cleanerCookie);
     expect(started.response.status).toBe(200);
     expect(started.payload.data.started_at).toBeTruthy();
@@ -167,9 +170,19 @@ describe("PostgreSQL HTTP integration", () => {
     const completed = await api("/api/tasks/" + taskId, "PATCH", {
       status: "completed",
       photo_after_url: "https://res.cloudinary.com/demo/after.jpg",
+      photo_after_public_id: "task-photos/" + zoneId + "/" + taskId + "/after",
+      photo_after_mime_type: "image/jpeg", photo_after_size: 2048,
     }, cleanerCookie);
     expect(completed.response.status).toBe(200);
     expect(completed.payload.data.completed_at).toBeTruthy();
+    const mediaRows = await pool.query(
+      "SELECT side, storage_provider, public_id, secure_url, byte_size FROM task_media WHERE task_id = $1 ORDER BY side",
+      [taskId],
+    );
+    expect(mediaRows.rows).toHaveLength(2);
+    expect(mediaRows.rows.map((row) => row.side)).toEqual(["after", "before"]);
+    expect(mediaRows.rows.every((row) => row.storage_provider === "cloudinary")).toBe(true);
+    expect(mediaRows.rows.find((row) => row.side === "before")?.byte_size).toBe("1024");
 
     const approved = await api("/api/tasks/" + taskId + "/approve", "POST", {
       quality_grade: "B", supervisor_notes: "Integration approval",

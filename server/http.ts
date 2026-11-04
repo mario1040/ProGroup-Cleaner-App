@@ -3,6 +3,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Pool } from "pg";
 import { assertNarisDatabaseUrl } from "./db/connection";
+import { applyTaskUpdate, type TaskRecord } from "./task-rules";
 
 type Role = "admin" | "supervisor" | "cleaner";
 interface AuthContext { id: string; username: string; full_name: string; role: Role; is_active: boolean; }
@@ -347,6 +348,144 @@ app.get("/api/audit-logs", requireAuth, asyncRoute(async (req, res) => {
 app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
   const result = await pool.query("SELECT id, raw_data FROM sop_items ORDER BY id");
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  const cleanerFields = new Set([
+    "status", "employee_notes", "employee_signature_url",
+    "photo_before_url", "photo_after_url",
+    "photo_before_taken_at", "photo_before_uploaded_at",
+    "photo_after_taken_at", "photo_after_uploaded_at",
+    "photo_before_size", "photo_after_size",
+    "photo_before_mime_type", "photo_after_mime_type",
+    "photo_capture_status",
+  ]);
+  const supervisorFields = new Set([
+    ...cleanerFields,
+    "assigned_to", "title", "description", "zone_id", "due_date", "due_time",
+    "goal", "requires_photo_before", "requires_photo_after",
+    "requires_supervisor_approval", "requires_gps", "estimated_duration_minutes",
+    "supervisor_notes",
+  ]);
+  const allowed = req.auth?.role === "cleaner" ? cleanerFields : supervisorFields;
+  const updates: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (!allowed.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+    updates[key] = value;
+  }
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "At least one task field must be provided" }); return;
+  }
+  if (updates.status !== undefined &&
+      !["pending", "in_progress", "completed", "late", "escalated"].includes(String(updates.status))) {
+    res.status(400).json({ error: "Unsupported task status" }); return;
+  }
+  if (updates.due_date !== undefined &&
+      (typeof updates.due_date !== "string" || !isValidDateOnly(updates.due_date))) {
+    res.status(400).json({ error: "due_date must be a valid YYYY-MM-DD date" }); return;
+  }
+  if (updates.due_time !== undefined &&
+      (typeof updates.due_time !== "string" || !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(updates.due_time))) {
+    res.status(400).json({ error: "due_time must use HH:MM" }); return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      "SELECT id, raw_data, assigned_to, assigned_by, zone_id, due_date, due_time, status " +
+      "FROM task_instances WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Task not found" }); return;
+    }
+    const row = selected.rows[0];
+    if (req.auth?.role === "cleaner" && row.assigned_to !== req.auth.id) {
+      await client.query("ROLLBACK");
+      res.status(403).json({ error: "You can only update tasks assigned to you" }); return;
+    }
+    const current = {
+      ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+      id: row.id,
+      assigned_to: row.assigned_to,
+      assigned_by: row.assigned_by,
+      zone_id: row.zone_id,
+      due_date: String(row.due_date).slice(0, 10),
+      due_time: row.due_time,
+      status: row.status,
+    } as TaskRecord & Record<string, unknown>;
+
+    if (req.auth?.role === "cleaner" && updates.status !== undefined) {
+      const allowedTransition =
+        (current.status === "pending" && updates.status === "in_progress") ||
+        (current.status === "in_progress" && updates.status === "completed");
+      if (!allowedTransition) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "Invalid task status transition" }); return;
+      }
+    }
+
+    if (typeof updates.assigned_to === "string" && updates.assigned_to !== current.assigned_to) {
+      const assignee = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [updates.assigned_to],
+      );
+      if (assignee.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Tasks can only be assigned to active cleaners" }); return;
+      }
+    }
+
+    const now = new Date().toISOString();
+    const merged = applyTaskUpdate(current, updates as Partial<TaskRecord>, now);
+    const result = await client.query(
+      "UPDATE task_instances SET assigned_to = $2, zone_id = $3, due_date = $4::date, " +
+      "due_time = $5, status = $6, raw_data = $7::jsonb, updated_at = $8::timestamptz " +
+      "WHERE id = $1 RETURNING id",
+      [req.params.id, merged.assigned_to, merged.zone_id, merged.due_date,
+        merged.due_time, merged.status, JSON.stringify(merged), now],
+    );
+    if (result.rowCount !== 1) throw new Error("Task update did not affect exactly one row");
+
+    const changedFields = Object.keys(updates);
+    const action = changedFields.some((field) => field.startsWith("photo_"))
+      ? "task_photo_updated"
+      : changedFields.includes("assigned_to")
+        ? "task_reassigned"
+        : changedFields.includes("status")
+          ? "task_status_" + String(updates.status)
+          : "task_updated";
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+      "VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::timestamptz)",
+      [auditId, req.params.id, action,
+        JSON.stringify({
+          changed_fields: changedFields,
+          status_before: current.status,
+          status_after: merged.status,
+          assigned_to_before: current.assigned_to,
+          assigned_to_after: merged.assigned_to,
+          actor_id: req.auth?.id,
+        }),
+        JSON.stringify({ id: auditId, task_id: req.params.id, action, created_at: now }),
+        now],
+    );
+    await client.query("COMMIT");
+    res.json({ data: merged });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.get("/api/tasks", requireAuth, asyncRoute(async (req, res) => {

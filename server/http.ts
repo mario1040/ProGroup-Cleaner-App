@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { assertNarisDatabaseUrl } from "./db/connection";
 import { applyTaskUpdate, type TaskRecord } from "./task-rules";
 import { generateRecurringTasksForDate } from "./task-generator";
@@ -153,6 +153,32 @@ function dateOnly(value: unknown): string {
   }
   if (typeof value === "string") return value.slice(0, 10);
   return "";
+}
+
+async function upsertTaskMediaRecord(
+  client: PoolClient,
+  taskId: string,
+  task: Record<string, unknown>,
+  side: "before" | "after",
+): Promise<void> {
+  const prefix = side === "before" ? "photo_before" : "photo_after";
+  const secureUrl = task[prefix + "_url"];
+  if (typeof secureUrl !== "string" || !secureUrl.startsWith("https://")) return;
+  const publicId = typeof task[prefix + "_public_id"] === "string" ? task[prefix + "_public_id"] : null;
+  const provider = secureUrl.includes("res.cloudinary.com") ? "cloudinary" : "legacy_external";
+  const byteSize = task[prefix + "_size"];
+  await client.query(
+    "INSERT INTO task_media (task_id, side, storage_provider, public_id, secure_url, mime_type, byte_size, captured_at, uploaded_at, metadata) " +
+    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz,$10::jsonb) " +
+    "ON CONFLICT (task_id, side) DO UPDATE SET storage_provider = EXCLUDED.storage_provider, " +
+    "public_id = COALESCE(EXCLUDED.public_id, task_media.public_id), secure_url = EXCLUDED.secure_url, " +
+    "mime_type = EXCLUDED.mime_type, byte_size = EXCLUDED.byte_size, captured_at = EXCLUDED.captured_at, " +
+    "uploaded_at = EXCLUDED.uploaded_at, metadata = EXCLUDED.metadata, updated_at = NOW()",
+    [taskId, side, provider, publicId, task[prefix + "_mime_type"] || null,
+      Number.isSafeInteger(byteSize) ? byteSize : null,
+      task[prefix + "_taken_at"] || null, task[prefix + "_uploaded_at"] || null,
+      JSON.stringify({ source: "task_update", side })],
+  );
 }
 
 function isValidDateOnly(value: string): boolean {
@@ -1905,6 +1931,12 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
     if (result.rowCount !== 1) throw new Error("Task update did not affect exactly one row");
 
     const changedFields = Object.keys(updates);
+    if (changedFields.some((field) => field.startsWith("photo_before_"))) {
+      await upsertTaskMediaRecord(client, req.params.id, merged, "before");
+    }
+    if (changedFields.some((field) => field.startsWith("photo_after_"))) {
+      await upsertTaskMediaRecord(client, req.params.id, merged, "after");
+    }
     const action = changedFields.some((field) => field.startsWith("photo_"))
       ? "task_photo_updated"
       : changedFields.includes("assigned_to")

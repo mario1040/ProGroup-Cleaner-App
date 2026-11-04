@@ -246,7 +246,13 @@ app.get("/health/ready", asyncRoute(async (_req, res) => {
       "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
       "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
       "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
-      "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END" +
+      "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
+      "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
+      "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
+      "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
+      "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
+      "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +
+      "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END" +
     "], NULL) AS missing",
   );
   const missing = result.rows[0]?.missing || [];
@@ -271,6 +277,71 @@ app.get("/api/zones", requireAuth, asyncRoute(async (_req, res) => {
     ...row.raw_data, id: row.id, location_id: row.location_id, name: row.name,
     responsible_employee_id: row.responsible_employee_id,
   })) });
+}));
+
+app.get("/api/locations", requireAuth, asyncRoute(async (_req, res) => {
+  const result = await pool.query("SELECT id, raw_data FROM locations ORDER BY name, id");
+  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.get("/api/operational-tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
+  const result = await pool.query("SELECT id, raw_data FROM operational_tasks ORDER BY title, id");
+  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.get("/api/device-switches", requireAuth, asyncRoute(async (_req, res) => {
+  const result = await pool.query("SELECT id, raw_data FROM device_switches ORDER BY code, id");
+  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.get("/api/kpi-snapshots", requireAuth, asyncRoute(async (req, res) => {
+  const requestedProfile = typeof req.query.profileId === "string" ? req.query.profileId : null;
+  const profileId = req.auth?.role === "cleaner" ? req.auth.id : requestedProfile;
+  const values: unknown[] = [];
+  let where = "";
+  if (profileId) {
+    values.push(profileId);
+    where = " WHERE profile_id = $" + values.length;
+  }
+  values.push(100);
+  const result = await pool.query(
+    "SELECT id, raw_data FROM kpi_snapshots" + where +
+      " ORDER BY period_end DESC NULLS LAST, id LIMIT $" + values.length,
+    values,
+  );
+  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+}));
+
+app.get("/api/audit-logs", requireAuth, asyncRoute(async (req, res) => {
+  const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
+  const rawOffset = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 500 ||
+      !Number.isInteger(rawOffset) || rawOffset < 0 || rawOffset > 1000000) {
+    res.status(400).json({ error: "limit must be 1-500 and offset must be 0-1000000" }); return;
+  }
+  const values: unknown[] = [];
+  let where = "";
+  if (req.auth?.role === "cleaner") {
+    values.push(req.auth.id);
+    where = " WHERE EXISTS (SELECT 1 FROM task_instances t WHERE t.id = audit_logs.task_id AND t.assigned_to = $1)";
+  }
+  values.push(rawLimit);
+  const limitParameter = values.length;
+  values.push(rawOffset);
+  const offsetParameter = values.length;
+  const result = await pool.query(
+    "SELECT id, task_id, action, metadata, raw_data, created_at FROM audit_logs" +
+      where + " ORDER BY created_at DESC NULLS LAST, id LIMIT $" + limitParameter +
+      " OFFSET $" + offsetParameter,
+    values,
+  );
+  res.json({
+    data: result.rows.map((row) => ({
+      ...row.raw_data, id: row.id, task_id: row.task_id,
+      action: row.action, metadata: row.metadata, created_at: row.created_at,
+    })),
+    meta: { limit: rawLimit, offset: rawOffset },
+  });
 }));
 
 app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {

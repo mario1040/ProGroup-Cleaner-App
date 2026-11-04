@@ -136,6 +136,12 @@ function requireSameOrigin(req: Request, res: Response, next: NextFunction): voi
   }
   next();
 }
+function isValidDateOnly(value: string): boolean {
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  const parsed = new Date(value + "T00:00:00.000Z");
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 function asyncRoute(
   handler: (req: AuthRequest, res: Response) => Promise<void>,
 ) {
@@ -294,6 +300,12 @@ app.get("/api/tasks", requireAuth, asyncRoute(async (req, res) => {
       res.status(400).json({ error: "Date range cannot exceed 366 days" }); return;
     }
   }
+  const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
+  const rawOffset = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 500 ||
+      !Number.isInteger(rawOffset) || rawOffset < 0 || rawOffset > 1_000_000) {
+    res.status(400).json({ error: "limit must be 1-500 and offset must be 0-1000000" }); return;
+  }
   const values: unknown[] = [];
   const clauses: string[] = [];
   if (date) { values.push(date); clauses.push("due_date = $" + values.length + "::date"); }
@@ -305,15 +317,23 @@ app.get("/api/tasks", requireAuth, asyncRoute(async (req, res) => {
     values.push(req.auth.id); clauses.push("assigned_to = $" + values.length);
   }
   const where = clauses.length ? " WHERE " + clauses.join(" AND ") : "";
+  values.push(rawLimit);
+  const limitParameter = values.length;
+  values.push(rawOffset);
+  const offsetParameter = values.length;
   const result = await pool.query(
     "SELECT id, raw_data, assigned_to, due_date, due_time, status FROM task_instances" +
-    where + " ORDER BY due_date, due_time NULLS LAST, id",
+    where + " ORDER BY due_date, due_time NULLS LAST, id LIMIT $" + limitParameter +
+    " OFFSET $" + offsetParameter,
     values,
   );
-  res.json({ data: result.rows.map((row) => ({
-    ...row.raw_data, id: row.id, assigned_to: row.assigned_to,
-    due_date: String(row.due_date).slice(0, 10), due_time: row.due_time, status: row.status,
-  })) });
+  res.json({
+    data: result.rows.map((row) => ({
+      ...row.raw_data, id: row.id, assigned_to: row.assigned_to,
+      due_date: String(row.due_date).slice(0, 10), due_time: row.due_time, status: row.status,
+    })),
+    meta: { limit: rawLimit, offset: rawOffset },
+  });
 }));
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

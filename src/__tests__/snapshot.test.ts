@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTaskInstanceSnapshot } from '../lib/api';
+import { buildTaskInstanceSnapshot } from '../lib/task-utils';
 import { SOPItem } from '../types';
 
 describe('Task Instance Snapshot & Single SOP Image Flow', () => {

@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.github
+.env
+.env.*
+!.env.naris.example
+*.log
+naris_ops_firestore_backup
+*.tar.gz
+*.enc
+coverage

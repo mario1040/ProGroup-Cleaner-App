@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { app, pool } from "./http";
+import { generateRecurringTasksForDate } from "./task-generator";
 
 const suffix = randomBytes(5).toString("hex");
 const adminId = "it_admin_" + suffix;
@@ -117,6 +118,7 @@ describe("PostgreSQL HTTP integration", () => {
       [createdTaskIds, userIds],
     );
     await pool.query("DELETE FROM task_instances WHERE id = ANY($1::text[])", [createdTaskIds]);
+    await pool.query("DELETE FROM task_generation_runs WHERE run_date = $1::date", ["2099-05-03"]);
     await pool.query("DELETE FROM sop_items WHERE id = ANY($1::text[])", [createdSopIds]);
     await pool.query("DELETE FROM zones WHERE id = $1", [zoneId]);
     await pool.query("DELETE FROM locations WHERE id = $1", [locationId]);
@@ -202,6 +204,21 @@ describe("PostgreSQL HTTP integration", () => {
     }, supervisorCookie);
     expect(sop.response.status).toBe(201);
     createdSopIds.push(sop.payload.data.id);
+
+    const generated = await generateRecurringTasksForDate(pool, "2099-05-03");
+    expect(generated.generated).toBe(1);
+    const repeated = await generateRecurringTasksForDate(pool, "2099-05-03");
+    expect(repeated.generated).toBe(0);
+    expect(repeated.skippedAlreadyExists).toBe(1);
+    const generatedTaskId = "ti_rec_" + sop.payload.data.id + "_2099-05-03_0";
+    createdTaskIds.push(generatedTaskId);
+    const generatedRow = await pool.query(
+      "SELECT id, assigned_to, due_date, task_type FROM task_instances WHERE id = $1",
+      [generatedTaskId],
+    );
+    expect(generatedRow.rowCount).toBe(1);
+    expect(generatedRow.rows[0].assigned_to).toBe(cleanerId);
+    expect(generatedRow.rows[0].task_type).toBe("recurring");
 
     const sopUpdated = await api("/api/sop-items/" + sop.payload.data.id, "PATCH", {
       title: "Integration SOP updated",

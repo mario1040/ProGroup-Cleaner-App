@@ -265,6 +265,7 @@ app.get("/health/ready", asyncRoute(async (_req, res) => {
       "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
       "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
       "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
+      "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
       "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
       "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
       "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
@@ -911,6 +912,7 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     ["locations", "SELECT COUNT(*)::int AS count FROM locations"],
     ["zones", "SELECT COUNT(*)::int AS count FROM zones"],
     ["sop_items", "SELECT COUNT(*)::int AS count FROM sop_items"],
+    ["task_templates", "SELECT COUNT(*)::int AS count FROM task_templates"],
     ["task_instances", "SELECT COUNT(*)::int AS count FROM task_instances"],
     ["operational_tasks", "SELECT COUNT(*)::int AS count FROM operational_tasks"],
     ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches"],
@@ -958,7 +960,7 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
   const legacy = await pool.query<{ sop_orphans: number; template_orphans: number; base64_photos: number }>(
     "SELECT " +
     "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.sop_item_id WHERE t.sop_item_id IS NOT NULL AND s.id IS NULL) AS sop_orphans, " +
-    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.template_id WHERE t.template_id IS NOT NULL AND s.id IS NULL) AS template_orphans, " +
+    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN task_templates tt ON tt.id = t.template_id WHERE t.template_id IS NOT NULL AND tt.id IS NULL) AS template_orphans, " +
     "(SELECT COUNT(*)::int FROM task_instances t WHERE COALESCE(t.raw_data->>'photo_before_url','') LIKE 'data:image/%' OR COALESCE(t.raw_data->>'photo_after_url','') LIKE 'data:image/%') AS base64_photos",
   );
   const legacyRow = legacy.rows[0];

@@ -149,6 +149,16 @@ export interface OperationalTask {
   is_active: boolean;
 }
 
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category: 'معدات تنظيف' | 'مواد كيميائية' | 'مستهلكات' | 'أخرى';
+  quantity: number;
+  min_quantity: number;
+  last_updated: string;
+  status: 'متوفر' | 'منخفض' | 'نفد';
+}
+
 export interface KpiSnapshot {
   id: string;
   profile_id: string;

@@ -4,7 +4,6 @@ import html2canvas from "html2canvas";
 import ProfessorLogo from "./ProfessorLogo";
 import SwitchLabelsGuide from "./SwitchLabelsGuide";
 import SystemDocumentationGuide from "./SystemDocumentationGuide";
-import FirestoreQuotaBanner from "./FirestoreQuotaBanner";
 import { BookOpen } from "lucide-react";
 import { 
   CheckCircle, 
@@ -1144,9 +1143,6 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-right">
       
-      {/* Firestore Quota Exhaustion Warning Banner */}
-      <FirestoreQuotaBanner onRetry={loadAllData} />
-
       {/* Toast Notification Container */}
       {toast && (
         <div className={`fixed top-4 left-4 right-4 md:left-auto md:w-96 z-50 p-4 rounded-xl shadow-xl border transition-all duration-300 flex items-center gap-3 ${
@@ -3161,10 +3157,10 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
                         <div>
                           <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5 justify-end">
-                            ⚙️ فحص صحة وتطابق البيانات السحابية (Firestore & Storage Health)
+                            ⚙️ فحص صحة قاعدة PostgreSQL وخدمات الوسائط
                           </h4>
                           <p className="text-xs text-slate-500 mt-1">
-                            أداة تفتيش شاملة للتحقق من سلامة الجداول في Firestore ومطابقتها للمقاييس الفنية للتشغيل الدائم.
+                            فحص سلامة سجلات PostgreSQL والعلاقات الأساسية المستخدمة في تشغيل النظام.
                           </p>
                         </div>
                         
@@ -3180,7 +3176,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                                 <Loader2 className="w-3.5 h-3.5 animate-spin text-white" /> جاري التحقق...
                               </span>
                             ) : (
-                              "🔍 تشغيل فحص الداتابيز السحابية"
+                              "🔍 تشغيل فحص قاعدة PostgreSQL"
                             )}
                           </button>
                         </div>
@@ -3189,23 +3185,23 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       {/* Production Cloud Indicators */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 text-xs font-bold">
                         <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between">
-                          <span className="text-slate-500">سحابة Firestore:</span>
+                          <span className="text-slate-500">قاعدة PostgreSQL:</span>
                           <span className="text-emerald-600 flex items-center gap-1">
                             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            نشطة ومتزامنة 🟢
+                            مصدر بيانات التطبيق
                           </span>
                         </div>
                         <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between">
-                          <span className="text-slate-500">حاوية Storage:</span>
+                          <span className="text-slate-500">خدمة الصور:</span>
                           <span className="text-emerald-600 flex items-center gap-1">
                             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            متصلة ومباشرة ☁️
+                            Cloudinary
                           </span>
                         </div>
                         <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between">
                           <span className="text-slate-500">نمط المعمارية:</span>
                           <span className="text-indigo-600 font-extrabold">
-                            سحابي حصرياً (Online-Only)
+                            PostgreSQL API
                           </span>
                         </div>
                       </div>
@@ -3963,7 +3959,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                               {isExpanded && (
                                 <div className="border border-slate-200 rounded-xl overflow-hidden mt-2">
                                   <div className="bg-slate-800 text-slate-300 px-4 py-2 font-mono text-[10px] flex justify-between items-center select-none">
-                                    <span>DATABASE DOCUMENT STRUCTURE (Firestore JSON)</span>
+                                    <span>POSTGRESQL JSONB RECORD</span>
                                     <button 
                                       type="button"
                                       onClick={() => {

@@ -20,10 +20,9 @@ import TodayTasksPage from "./components/TodayTasksPage";
 import MyKpiPage from "./components/MyKpiPage";
 import AdminDashboard from "./components/AdminDashboard";
 import ProfessorLogo from "./components/ProfessorLogo";
-import FirebaseDiagnosticTool from "./components/FirebaseDiagnosticTool";
+import ApiHealthPanel from "./components/ApiHealthPanel";
 import SwitchLabelsGuide from "./components/SwitchLabelsGuide";
 import SystemDocumentationGuide from "./components/SystemDocumentationGuide";
-import FirestoreQuotaBanner from "./components/FirestoreQuotaBanner";
 
 type SessionSummary = {
   id: string;
@@ -270,7 +269,6 @@ export default function App() {
           </button>
         </div>
       )}
-      {isOnline && !user && <FirestoreQuotaBanner onRetry={() => window.location.reload()} />}
       {!user ? (
         showPublicGuide ? (
           <SystemDocumentationGuide onBack={() => setShowPublicGuide(false)} initialRole="all" />
@@ -363,7 +361,7 @@ export default function App() {
                   <div className="bg-indigo-50/70 p-3 rounded-xl border border-indigo-100 text-[10px] text-indigo-800 leading-relaxed font-bold flex items-start gap-2">
                     <Info className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
                     <span>
-                      يتم حفظ جلسة خفيفة بدون كلمة المرور، ويتم إعادة التحقق من الملف الشخصي من Firestore عند استعادة الجلسة.
+                      يتم حفظ معرّف جلسة خفيف بدون كلمة المرور، وتتم إعادة التحقق من الحساب عبر PostgreSQL API عند استعادة الجلسة.
                     </span>
                   </div>
                 </div>
@@ -400,7 +398,7 @@ export default function App() {
           )}
         </div>
       )}
-      <FirebaseDiagnosticTool />
+      <ApiHealthPanel />
     </div>
   );
 }

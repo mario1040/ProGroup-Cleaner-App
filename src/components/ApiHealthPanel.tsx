@@ -22,7 +22,7 @@ const HEALTH_REQUEST_OPTIONS: RequestInit = {
   credentials: "omit",
 };
 
-export default function FirebaseDiagnosticTool() {
+export default function ApiHealthPanel() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [health, setHealth] = useState<HealthState>({

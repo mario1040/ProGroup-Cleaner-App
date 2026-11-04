@@ -1,5 +1,6 @@
 import type {
   DeviceSwitch,
+  InventoryItem,
   OperationalTask,
   Profile,
   SOPItem,
@@ -180,6 +181,36 @@ export async function getOperationalTasks(): Promise<(OperationalTask & { respon
     ...task,
     responsible_employee: profiles.find((profile) => profile.id === task.responsible_employee_id),
   }));
+}
+
+export async function getInventoryItems(): Promise<InventoryItem[]> {
+  const result = await apiRequest<ApiEnvelope<InventoryItem[]>>("/api/inventory-items");
+  return result.data;
+}
+
+export async function createInventoryItem(
+  item: Omit<InventoryItem, "id" | "last_updated" | "status">,
+): Promise<InventoryItem> {
+  const result = await apiRequest<{ data: InventoryItem }>("/api/inventory-items", {
+    method: "POST",
+    body: jsonBody(item),
+  });
+  return result.data;
+}
+
+export async function updateInventoryItem(
+  id: string,
+  updates: Partial<Pick<InventoryItem, "name" | "category" | "quantity" | "min_quantity">>,
+): Promise<InventoryItem> {
+  const result = await apiRequest<{ data: InventoryItem }>("/api/inventory-items/" + encodeURIComponent(id), {
+    method: "PATCH",
+    body: jsonBody(updates),
+  });
+  return result.data;
+}
+
+export async function deleteInventoryItem(id: string): Promise<void> {
+  await apiRequest("/api/inventory-items/" + encodeURIComponent(id), { method: "DELETE" });
 }
 
 export async function getDeviceSwitches(): Promise<DeviceSwitch[]> {

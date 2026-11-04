@@ -14,6 +14,7 @@ const rejectTaskId = "it_reject_" + suffix;
 const createdUserIds: string[] = [];
 const createdTaskIds: string[] = [taskId, rejectTaskId];
 const createdSopIds: string[] = [];
+const createdInventoryIds: string[] = [];
 let server: ReturnType<typeof app.listen>;
 let baseUrl = "";
 
@@ -117,6 +118,7 @@ describe("PostgreSQL HTTP integration", () => {
       "DELETE FROM audit_logs WHERE task_id = ANY($1::text[]) OR metadata->>'actor_id' = ANY($2::text[]) OR metadata->>'user_id' = ANY($2::text[])",
       [createdTaskIds, userIds],
     );
+    await pool.query("DELETE FROM inventory_items WHERE id = ANY($1::text[])", [createdInventoryIds]);
     await pool.query("DELETE FROM task_instances WHERE id = ANY($1::text[])", [createdTaskIds]);
     await pool.query("DELETE FROM task_generation_runs WHERE run_date = $1::date", ["2099-05-03"]);
     await pool.query("DELETE FROM sop_items WHERE id = ANY($1::text[])", [createdSopIds]);
@@ -232,6 +234,29 @@ describe("PostgreSQL HTTP integration", () => {
     expect(createdUser.response.status).toBe(201);
     expect(createdUser.payload.generatedPassword).toBeTruthy();
     createdUserIds.push(createdUser.payload.profile.id);
+
+    const inventoryCreated = await api("/api/inventory-items", "POST", {
+      name: "Integration inventory item",
+      category: "معدات تنظيف",
+      quantity: 8,
+      min_quantity: 3,
+    }, adminCookie);
+    expect(inventoryCreated.response.status).toBe(201);
+    expect(inventoryCreated.payload.data.status).toBe("متوفر");
+    createdInventoryIds.push(inventoryCreated.payload.data.id);
+
+    const inventoryListed = await api("/api/inventory-items", "GET", undefined, adminCookie);
+    expect(inventoryListed.response.status).toBe(200);
+    expect(inventoryListed.payload.data.some((item: any) => item.id === inventoryCreated.payload.data.id)).toBe(true);
+
+    const inventoryUpdated = await api("/api/inventory-items/" + inventoryCreated.payload.data.id, "PATCH", {
+      quantity: 2,
+    }, adminCookie);
+    expect(inventoryUpdated.response.status).toBe(200);
+    expect(inventoryUpdated.payload.data.status).toBe("منخفض");
+
+    const inventoryDeleted = await api("/api/inventory-items/" + inventoryCreated.payload.data.id, "DELETE", undefined, adminCookie);
+    expect(inventoryDeleted.response.status).toBe(200);
 
     const validation = await api("/api/system/validation", "GET", undefined, adminCookie);
     expect(validation.response.status).toBe(200);

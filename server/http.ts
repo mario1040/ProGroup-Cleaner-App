@@ -989,7 +989,7 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     "SELECT " +
     "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.sop_item_id WHERE t.sop_item_id IS NOT NULL AND s.id IS NULL) AS sop_orphans, " +
     "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN task_templates tt ON tt.id = t.template_id WHERE t.template_id IS NOT NULL AND tt.id IS NULL) AS template_orphans, " +
-    "(SELECT COUNT(*)::int FROM task_instances t WHERE COALESCE(t.raw_data->>'photo_before_url','') LIKE 'data:image/%' OR COALESCE(t.raw_data->>'photo_after_url','') LIKE 'data:image/%') AS base64_photos",
+    "(SELECT COUNT(*)::int FROM task_instances t WHERE t.raw_data::text LIKE '%data:image/%') AS base64_photos",
   );
   const legacyRow = legacy.rows[0];
   const taskDetail = details.find((item) => item.collectionName === "task_instances");

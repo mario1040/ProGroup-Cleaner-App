@@ -14,7 +14,7 @@ import {
   getCurrentUserProfile,
   loginUser,
   logoutUser,
-} from "./lib/api";
+} from "./lib/api-postgres";
 import type { Profile } from "./types";
 import TodayTasksPage from "./components/TodayTasksPage";
 import MyKpiPage from "./components/MyKpiPage";

@@ -390,7 +390,7 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
     res.status(400).json({ error: "due_date must be a valid YYYY-MM-DD date" }); return;
   }
   if (updates.due_time !== undefined &&
-      (typeof updates.due_time !== "string" || !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(updates.due_time))) {
+      (typeof updates.due_time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(updates.due_time))) {
     res.status(400).json({ error: "due_time must use HH:MM" }); return;
   }
 
@@ -447,10 +447,10 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
     const merged = applyTaskUpdate(current, updates as Partial<TaskRecord>, now);
     const result = await client.query(
       "UPDATE task_instances SET assigned_to = $2, zone_id = $3, due_date = $4::date, " +
-      "due_time = $5, status = $6, raw_data = $7::jsonb, updated_at = $8::timestamptz " +
-      "WHERE id = $1 RETURNING id",
+      "due_time = $5, status = $6, title = $7, description = $8, " +
+      "raw_data = $9::jsonb, updated_at = $10::timestamptz WHERE id = $1 RETURNING id",
       [req.params.id, merged.assigned_to, merged.zone_id, merged.due_date,
-        merged.due_time, merged.status, JSON.stringify(merged), now],
+        merged.due_time, merged.status, merged.title, merged.description, JSON.stringify(merged), now],
     );
     if (result.rowCount !== 1) throw new Error("Task update did not affect exactly one row");
 

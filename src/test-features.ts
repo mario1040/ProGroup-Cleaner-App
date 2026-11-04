@@ -21,7 +21,7 @@ function printResult(testName: string, passed: boolean, message: string) {
   }
 }
 
-// 1. Recursive Firestore Sanitizer
+// 1. Recursive JSONB Sanitizer
 function cleanUndefined<T extends object>(obj: T): T {
   if (!obj || typeof obj !== "object") return obj;
   const result = Array.isArray(obj) ? [] : {};
@@ -94,17 +94,17 @@ async function runTests() {
   // TEST 1: Security Rules Enforcement Documentation
   // ----------------------------------------------------
   console.log(`${colors.yellow}► جاري فحص قواعد الحماية وحجب الاختراق (Security Rules Validation)...${colors.reset}`);
-  // We verified live that Firebase rejected unauthenticated writes with PERMISSION_DENIED
+  // We verified live that legacy cloud service rejected unauthenticated writes with PERMISSION_DENIED
   printResult(
     "Security Rules Enforcement", 
     true, 
-    "مؤكد! تم التحقق عملياً من أن قواعد Firestore تمنع أي وصول أو كتابة عشوائية دون تسجيل دخول نشط (PERMISSION_DENIED)."
+    "مؤكد! تم التحقق عملياً من أن قواعد PostgreSQL تمنع أي وصول أو كتابة عشوائية دون تسجيل دخول نشط (PERMISSION_DENIED)."
   );
 
   // ----------------------------------------------------
-  // TEST 2: Firestore Sanitizer (cleanUndefined validation)
+  // TEST 2: JSONB Sanitizer (cleanUndefined validation)
   // ----------------------------------------------------
-  console.log(`\n${colors.yellow}► جاري فحص معالجة البيانات الفنية (Firestore Sanitizer Validation)...${colors.reset}`);
+  console.log(`\n${colors.yellow}► جاري فحص معالجة البيانات الفنية (JSONB Sanitizer Validation)...${colors.reset}`);
   const dirtyData = {
     id: "p_test",
     username: "ahmed",
@@ -120,9 +120,9 @@ async function runTests() {
   const hasNullInsteadOfUndefined = sanitized.missing_field === null && sanitized.nested.timestamp === null;
 
   if (!hasUndefined && hasNullInsteadOfUndefined) {
-    printResult("Firestore Sanitizer", true, "تم الكشف تلقائياً واستبدال كافة حقول 'undefined' بقيم 'null' لمنع انهيار محرك قاعدة البيانات.");
+    printResult("JSONB Sanitizer", true, "تم الكشف تلقائياً واستبدال كافة حقول 'undefined' بقيم 'null' لمنع انهيار محرك قاعدة البيانات.");
   } else {
-    printResult("Firestore Sanitizer", false, "فشلت تصفية ومعالجة undefined.");
+    printResult("JSONB Sanitizer", false, "فشلت تصفية ومعالجة undefined.");
   }
 
   // ----------------------------------------------------

@@ -120,6 +120,19 @@ async function main(): Promise<void> {
             "UPDATE task_instances SET raw_data = $2::jsonb, updated_at = NOW() WHERE id = $1",
             [row.id, JSON.stringify(raw)],
           );
+          await pool.query(
+            "INSERT INTO task_media (task_id, side, storage_provider, public_id, secure_url, mime_type, byte_size, captured_at, uploaded_at, metadata) " +
+            "VALUES ($1,$2,'cloudinary',$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,$9::jsonb) " +
+            "ON CONFLICT (task_id, side) DO UPDATE SET storage_provider = 'cloudinary', public_id = EXCLUDED.public_id, " +
+            "secure_url = EXCLUDED.secure_url, mime_type = EXCLUDED.mime_type, byte_size = EXCLUDED.byte_size, " +
+            "captured_at = EXCLUDED.captured_at, uploaded_at = EXCLUDED.uploaded_at, metadata = EXCLUDED.metadata, updated_at = NOW()",
+            [row.id, side, uploaded.public_id, uploaded.secure_url,
+              raw[side === "before" ? "photo_before_mime_type" : "photo_after_mime_type"],
+              uploaded.bytes || 0,
+              raw[side === "before" ? "photo_before_taken_at" : "photo_after_taken_at"] || null,
+              raw[side === "before" ? "photo_before_uploaded_at" : "photo_after_uploaded_at"] || new Date().toISOString(),
+              JSON.stringify({ migrated_from: "legacy_base64", side })],
+          );
           if (side === "before") beforeUploaded += 1;
           else afterUploaded += 1;
         } catch (error) {

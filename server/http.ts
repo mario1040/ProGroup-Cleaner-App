@@ -278,7 +278,7 @@ app.get("/api/tasks", requireAuth, asyncRoute(async (req, res) => {
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     res.status(400).json({ error: "date must use YYYY-MM-DD" }); return;
   }
-  if ((start && !/^\\d{4}-\\d{2}-\\d{2}$/.test(start)) || (end && !/^\\d{4}-\\d{2}-\\d{2}$/.test(end))) {
+  if ((start && !/^\d{4}-\d{2}-\d{2}$/.test(start)) || (end && !/^\d{4}-\d{2}-\d{2}$/.test(end))) {
     res.status(400).json({ error: "Date range must use YYYY-MM-DD" }); return;
   }
   if ((start && !end) || (!start && end)) {
@@ -326,10 +326,10 @@ async function start(): Promise<void> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
   await pool.query("SELECT 1");
   const server = app.listen(PORT, "0.0.0.0", () => {
-    process.stdout.write("Naris Ops API listening on port " + PORT + "\\n");
+    process.stdout.write("Naris Ops API listening on port " + PORT + "\n");
   });
   const shutdown = (signal: string) => {
-    process.stdout.write(signal + " received; shutting down API.\\n");
+    process.stdout.write(signal + " received; shutting down API.\n");
     server.close(() => {
       void pool.end().finally(() => process.exit(0));
     });

@@ -1,0 +1,54 @@
+name: Task Engine CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "package.json"
+      - "tsconfig.json"
+      - ".github/workflows/task-engine-ci.yml"
+  push:
+    branches: [feat/postgres-task-engine]
+    paths:
+      - "server/**"
+      - "package.json"
+      - "tsconfig.json"
+      - ".github/workflows/task-engine-ci.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: naris_ops
+          POSTGRES_USER: naris_test
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U naris_test -d naris_ops"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://naris_test:ci-only-password@localhost:5432/naris_ops
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+      - name: Apply and verify PostgreSQL schema
+        run: npx tsx server/db/schema-smoke.ts
+      - name: Run task-engine tests
+        run: npx vitest run server
+      - name: TypeScript check
+        run: npm run lint
+      - name: Frontend production build
+        run: npm run build

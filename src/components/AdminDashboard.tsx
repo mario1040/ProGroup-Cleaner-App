@@ -65,7 +65,7 @@ import {
   uploadPhoto,
   compressImage,
   saveZone
-} from "../lib/api";
+} from "../lib/api-postgres";
 import { Profile, Zone, TaskTemplate, TaskInstance, OperationalTask, DeviceSwitch } from "../types";
 import InventoryManager from "./InventoryManager";
 import { imageUrlToDataUrl } from "../lib/cloudinary";

@@ -56,8 +56,14 @@ function clearSessionCookie(res: Response): void {
     (process.env.NODE_ENV === "production" ? "None; Secure" : "Lax") +
     "; Max-Age=0");
 }
-function publicProfile(row: Record<string, unknown>): AuthContext {
+function publicProfile(row: Record<string, unknown>): AuthContext & Record<string, unknown> {
+  const raw = row.raw_data && typeof row.raw_data === "object" && !Array.isArray(row.raw_data)
+    ? { ...(row.raw_data as Record<string, unknown>) }
+    : {};
+  delete raw.password;
+  delete raw.password_record;
   return {
+    ...raw,
     id: String(row.id),
     username: String(row.username),
     full_name: String(row.full_name),
@@ -81,7 +87,7 @@ function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void 
   const token = readCookie(req, COOKIE_NAME);
   if (!token) { res.status(401).json({ error: "Authentication required" }); return; }
   void pool.query(
-    "SELECT u.id, u.username, u.full_name, u.role, u.is_active " +
+    "SELECT u.id, u.username, u.full_name, u.role, u.is_active, u.raw_data " +
     "FROM auth_sessions s JOIN users u ON u.id = s.user_id " +
     "WHERE s.token_hash = $1 AND s.expires_at > NOW() AND u.is_active = TRUE",
     [sha256(token)],
@@ -153,7 +159,7 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
   }
 
   const result = await pool.query(
-    "SELECT id, username, full_name, phone, role, is_active, password_record " +
+    "SELECT id, username, full_name, phone, role, is_active, password_record, raw_data " +
     "FROM users WHERE LOWER(username) = LOWER($1) OR phone = $1 OR LOWER(full_name) = LOWER($1) " +
     "ORDER BY CASE WHEN LOWER(username) = LOWER($1) THEN 0 WHEN phone = $1 THEN 1 ELSE 2 END LIMIT 1",
     [identifier],
@@ -205,10 +211,7 @@ app.get("/api/users", requireAuth, allowRoles("admin", "supervisor"), asyncRoute
     "SELECT id, username, full_name, role, is_active, raw_data " +
     "FROM users ORDER BY full_name",
   );
-  res.json({ data: result.rows.map((row) => ({
-    ...row.raw_data, id: row.id, username: row.username, full_name: row.full_name,
-    role: row.role, is_active: row.is_active,
-  })) });
+  res.json({ data: result.rows.map((row) => publicProfile(row)) });
 }));
 
 app.get("/api/zones", requireAuth, asyncRoute(async (_req, res) => {

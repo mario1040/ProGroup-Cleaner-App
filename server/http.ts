@@ -174,7 +174,7 @@ async function upsertTaskMediaRecord(
     "public_id = COALESCE(EXCLUDED.public_id, task_media.public_id), secure_url = EXCLUDED.secure_url, " +
     "mime_type = EXCLUDED.mime_type, byte_size = EXCLUDED.byte_size, captured_at = EXCLUDED.captured_at, " +
     "uploaded_at = EXCLUDED.uploaded_at, metadata = EXCLUDED.metadata, updated_at = NOW()",
-    [taskId, side, provider, publicId, task[prefix + "_mime_type"] || null,
+    [taskId, side, provider, publicId, secureUrl, task[prefix + "_mime_type"] || null,
       Number.isSafeInteger(byteSize) ? byteSize : null,
       task[prefix + "_taken_at"] || null, task[prefix + "_uploaded_at"] || null,
       JSON.stringify({ source: "task_update", side })],

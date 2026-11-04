@@ -289,9 +289,10 @@ export async function saveTemplate(template: Partial<TaskTemplate>): Promise<Tas
   const path = template.id
     ? "/api/sop-items/" + encodeURIComponent(template.id)
     : "/api/sop-items";
+  const { id, ...payload } = template;
   const result = await apiRequest<{ data: TaskTemplate }>(path, {
-    method: template.id ? "PATCH" : "POST",
-    body: jsonBody(template),
+    method: id ? "PATCH" : "POST",
+    body: jsonBody(payload),
   });
   return result.data;
 }
@@ -301,10 +302,11 @@ export async function deleteTemplate(id: string): Promise<void> {
 }
 
 export async function saveProfile(profile: Partial<Profile>): Promise<{ profile: Profile; generatedPassword?: string }> {
-  const path = profile.id ? "/api/users/" + encodeURIComponent(profile.id) : "/api/users";
+  const { id, ...payload } = profile;
+  const path = id ? "/api/users/" + encodeURIComponent(id) : "/api/users";
   const result = await apiRequest<{ profile: Profile; generatedPassword?: string }>(path, {
-    method: profile.id ? "PATCH" : "POST",
-    body: jsonBody(profile),
+    method: id ? "PATCH" : "POST",
+    body: jsonBody(payload),
   });
   return result;
 }
@@ -330,10 +332,11 @@ export async function validateDatabase(): Promise<DatabaseValidationReport> {
 }
 
 export async function saveZone(zone: Partial<Zone>): Promise<Zone> {
-  const path = zone.id ? "/api/zones/" + encodeURIComponent(zone.id) : "/api/zones";
+  const { id, ...payload } = zone;
+  const path = id ? "/api/zones/" + encodeURIComponent(id) : "/api/zones";
   const result = await apiRequest<{ data: Zone }>(path, {
-    method: zone.id ? "PATCH" : "POST",
-    body: jsonBody(zone),
+    method: id ? "PATCH" : "POST",
+    body: jsonBody(payload),
   });
   return result.data;
 }

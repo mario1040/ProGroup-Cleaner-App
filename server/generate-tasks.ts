@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { Pool } from "pg";
 import { generateRecurringTasksForDate } from "./task-generator";
+import { assertNarisDatabaseUrl } from "./db/connection";
 
 function getBusinessDate(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -20,11 +21,7 @@ async function main(): Promise<void> {
     throw new Error("Date must use YYYY-MM-DD format.");
   }
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_URL environment variable is required.");
-  }
-
+  const connectionString = assertNarisDatabaseUrl(process.env.DATABASE_URL);
   const pool = new Pool({ connectionString });
   try {
     const summary = await generateRecurringTasksForDate(pool, date);

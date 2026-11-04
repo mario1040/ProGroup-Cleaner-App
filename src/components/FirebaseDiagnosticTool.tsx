@@ -9,7 +9,18 @@ type HealthState = {
   checkedAt?: string;
 };
 
-const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+// Vercel and other split-host deployments need an explicit API origin.
+// Docker/Nginx deployments can still override this with VITE_API_BASE_URL.
+const API_BASE_URL = String(
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? "https://naris-api.bezaverse.com" : "")
+).replace(/\/$/, "");
+
+const HEALTH_REQUEST_OPTIONS: RequestInit = {
+  cache: "no-store",
+  // Health endpoints are public; do not send session cookies cross-origin.
+  credentials: "omit",
+};
 
 export default function FirebaseDiagnosticTool() {
   const [open, setOpen] = useState(false);
@@ -20,17 +31,54 @@ export default function FirebaseDiagnosticTool() {
 
   const checkHealth = useCallback(async () => {
     setLoading(true);
+    const baseUrl = API_BASE_URL;
+    const errors: string[] = [];
+
     try {
-      const [liveResponse, readyResponse] = await Promise.all([
-        fetch(API_BASE_URL + "/health/live", { credentials: "include" }),
-        fetch(API_BASE_URL + "/health/ready", { credentials: "include" }),
+      // Check each endpoint independently. A failure in /health/live must not
+      // overwrite a successful /health/ready response (or vice versa).
+      const [liveResult, readyResult] = await Promise.allSettled([
+        fetch(baseUrl + "/health/live", HEALTH_REQUEST_OPTIONS),
+        fetch(baseUrl + "/health/ready", HEALTH_REQUEST_OPTIONS),
       ]);
-      const readyPayload = await readyResponse.json().catch(() => ({}));
+
+      let live: HealthState["live"] = "error";
+      let ready: HealthState["ready"] = "error";
+      let missing: string[] = [];
+
+      if (liveResult.status === "fulfilled") {
+        live = liveResult.value.ok ? "ok" : "error";
+        if (!liveResult.value.ok) {
+          errors.push(`فحص API process رجع HTTP ${liveResult.value.status}`);
+        }
+      } else {
+        errors.push(`فشل فحص API process: ${liveResult.reason instanceof Error ? liveResult.reason.message : String(liveResult.reason)}`);
+      }
+
+      if (readyResult.status === "fulfilled") {
+        const response = readyResult.value;
+        const payload = await response.json().catch(() => ({}));
+        missing = Array.isArray(payload?.missing) ? payload.missing : [];
+
+        if (response.status === 503) {
+          ready = "not_ready";
+          errors.push("قاعدة البيانات متصلة لكن بعض جداول الـ schema غير جاهزة.");
+        } else if (response.ok && payload?.status === "ready" &&
+          payload?.database === "connected" && payload?.schema === "present") {
+          ready = "ready";
+        } else {
+          ready = "error";
+          errors.push(payload?.error || `فحص Database schema رجع HTTP ${response.status} أو استجابة غير متوقعة.`);
+        }
+      } else {
+        errors.push(`فشل فحص Database schema: ${readyResult.reason instanceof Error ? readyResult.reason.message : String(readyResult.reason)}`);
+      }
+
       setHealth({
-        live: liveResponse.ok ? "ok" : "error",
-        ready: readyResponse.ok ? "ready" : readyResponse.status === 503 ? "not_ready" : "error",
-        missing: Array.isArray(readyPayload?.missing) ? readyPayload.missing : [],
-        message: readyPayload?.error,
+        live,
+        ready,
+        missing,
+        message: errors.length ? errors.join(" | ") : undefined,
         checkedAt: new Date().toLocaleString("ar-EG"),
       });
     } catch (error) {
@@ -68,7 +116,8 @@ export default function FirebaseDiagnosticTool() {
               </span>
             </div>
             {health.missing.length > 0 && <p className="text-amber-700">الجداول الناقصة: {health.missing.join(", ")}</p>}
-            {health.message && <p className="text-rose-600">{health.message}</p>}
+            {health.message && <p className="break-words text-rose-600">{health.message}</p>}
+            <p className="break-all text-slate-400">API: {baseUrl || "نفس نطاق الواجهة"}</p>
             {health.checkedAt && <p className="text-slate-400">آخر فحص: {health.checkedAt}</p>}
           </div>
           <button onClick={() => void checkHealth()} disabled={loading}

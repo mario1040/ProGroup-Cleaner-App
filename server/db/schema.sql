@@ -161,6 +161,19 @@ CREATE TABLE IF NOT EXISTS device_switches (
 );
 CREATE INDEX IF NOT EXISTS device_switches_zone_idx ON device_switches (zone_id);
 
+CREATE TABLE IF NOT EXISTS inventory_items (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('معدات تنظيف', 'مواد كيميائية', 'مستهلكات', 'أخرى')),
+  quantity INTEGER NOT NULL CHECK (quantity >= 0),
+  min_quantity INTEGER NOT NULL CHECK (min_quantity >= 0),
+  status TEXT NOT NULL CHECK (status IN ('متوفر', 'منخفض', 'نفد')),
+  raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS inventory_items_category_name_idx ON inventory_items (category, name);
+
 CREATE TABLE IF NOT EXISTS kpi_snapshots (
   id TEXT PRIMARY KEY,
   profile_id TEXT,

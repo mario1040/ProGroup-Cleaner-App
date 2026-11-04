@@ -987,10 +987,10 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     const sourceCount = Number(parity.rows[0]?.source_count || 0);
     const normalizedCount = Number(parity.rows[0]?.normalized_count || 0);
     const detail = details.find((item) => item.collectionName === collectionName);
-    if (sourceCount !== normalizedCount && detail) {
-      const difference = Math.abs(sourceCount - normalizedCount);
-      detail.errors.push("Top-level source archive count (" + sourceCount +
-        ") does not match normalized PostgreSQL count (" + normalizedCount + ").");
+    if (normalizedCount < sourceCount && detail) {
+      const difference = sourceCount - normalizedCount;
+      detail.errors.push("Top-level source archive contains " + sourceCount +
+        " documents, but normalized PostgreSQL contains only " + normalizedCount + ".");
       detail.failedDocs += difference;
       detail.passedDocs = Math.max(0, detail.totalDocs - detail.failedDocs);
       totalErrors += 1;

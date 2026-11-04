@@ -159,7 +159,7 @@ export default function InventoryManager() {
               <label className="block text-xs font-bold text-indigo-700 mb-1">التصنيف</label>
               <select 
                 value={newItem.category}
-                onChange={(e) => setNewItem({...newItem, category: e.target.value as any})}
+                onChange={(e) => setNewItem({...newItem, category: e.target.value as InventoryItem["category"]})}
                 className="w-full border border-indigo-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
               >
                 <option value="معدات تنظيف">معدات تنظيف</option>

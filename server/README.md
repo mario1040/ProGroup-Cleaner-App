@@ -128,9 +128,9 @@ This branch and CI do not create a database on the user's Windows/Docker host, d
 
 ## Isolated Docker deployment (Windows / Docker Desktop)
 
-The repository includes `docker-compose.naris.yml`. It creates a separate PostgreSQL 17 container, named volume, private Docker network, API, and Nginx frontend. It does not join or modify the existing marketing or Evolution PostgreSQL containers. PostgreSQL has no published host port; only the web UI is published on port 8081 by default.
+The repository includes `docker-compose.naris.yml`. It creates a separate PostgreSQL 17 container, named volume, isolated bridge network, bootstrap-only database admin, least-privilege runtime role, API, and Nginx frontend. It does not join or modify the existing marketing or Evolution PostgreSQL containers. PostgreSQL has no published host port; only the web UI is published on port 8081 by default.
 
-1. Copy `.env.naris.example` to `.env.naris` and edit it locally. Set a unique long hexadecimal `NARIS_DB_PASSWORD`; do not commit or share this file. Add the final public website origin to `APP_ALLOWED_ORIGINS`.
+1. Copy `.env.naris.example` to `.env.naris` and edit it locally. Set two different long hexadecimal passwords: `NARIS_DB_ADMIN_PASSWORD` for the bootstrap-only superuser and `NARIS_DB_PASSWORD` for the least-privilege runtime account. Do not commit or share this file. Add the final public website origin to `APP_ALLOWED_ORIGINS`.
 2. Keep `TASK_GENERATION_ENABLED=false` during initial provisioning and import.
 3. Put the decrypted Firestore REST backup folder at repository root as `naris_ops_firestore_backup`. Do not commit it.
 4. Start the isolated database and apply schema:

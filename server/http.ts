@@ -965,33 +965,38 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     });
   }
   const sourceMappings = [
-    ["users", "users"],
-    ["locations", "locations"],
-    ["zones", "zones"],
-    ["sop_items", "sop_items"],
-    ["task_templates", "task_templates"],
-    ["task_instances", "task_instances"],
-    ["operational_tasks", "operational_tasks"],
-    ["device_switches", "device_switches"],
-    ["kpi_snapshots", "kpi_snapshots"],
-    ["audit_logs", "audit_logs"],
+    { collectionName: "users", tableName: "users" },
+    { collectionName: "locations", tableName: "locations" },
+    { collectionName: "zones", tableName: "zones" },
+    { collectionName: "sop_items", tableName: "sop_items", deleteAction: "sop_deleted", deleteField: "sop_id" },
+    { collectionName: "task_templates", tableName: "task_templates", deleteAction: "task_template_deleted", deleteField: "task_template_id" },
+    { collectionName: "task_instances", tableName: "task_instances" },
+    { collectionName: "operational_tasks", tableName: "operational_tasks" },
+    { collectionName: "device_switches", tableName: "device_switches" },
+    { collectionName: "kpi_snapshots", tableName: "kpi_snapshots" },
+    { collectionName: "audit_logs", tableName: "audit_logs" },
   ] as const;
-  for (const [collectionName, tableName] of sourceMappings) {
-    const parity = await pool.query<{ source_count: number; normalized_count: number }>(
-      "SELECT " +
-      "(SELECT COUNT(*)::int FROM firestore_documents WHERE collection_name = $1 " +
-      "AND array_length(string_to_array(document_path, '/'), 1) = 2) AS source_count, " +
-      "(SELECT COUNT(*)::int FROM " + tableName + ") AS normalized_count",
-      [collectionName],
+  for (const mapping of sourceMappings) {
+    const deletionClause = "deleteAction" in mapping
+      ? "AND NOT EXISTS (SELECT 1 FROM audit_logs a WHERE a.action = $2 " +
+        "AND a.metadata->>$3 = split_part(d.document_path, '/', 2)) "
+      : "";
+    const values: unknown[] = "deleteAction" in mapping
+      ? [mapping.collectionName, mapping.deleteAction, mapping.deleteField]
+      : [mapping.collectionName];
+    const parity = await pool.query<{ missing_count: number }>(
+      "SELECT COUNT(*)::int AS missing_count FROM firestore_documents d " +
+      "WHERE d.collection_name = $1 AND array_length(string_to_array(d.document_path, '/'), 1) = 2 " +
+      "AND NOT EXISTS (SELECT 1 FROM " + mapping.tableName +
+      " target WHERE target.id = split_part(d.document_path, '/', 2)) " + deletionClause,
+      values,
     );
-    const sourceCount = Number(parity.rows[0]?.source_count || 0);
-    const normalizedCount = Number(parity.rows[0]?.normalized_count || 0);
-    const detail = details.find((item) => item.collectionName === collectionName);
-    if (normalizedCount < sourceCount && detail) {
-      const difference = sourceCount - normalizedCount;
-      detail.errors.push("Top-level source archive contains " + sourceCount +
-        " documents, but normalized PostgreSQL contains only " + normalizedCount + ".");
-      detail.failedDocs += difference;
+    const missingCount = Number(parity.rows[0]?.missing_count || 0);
+    const detail = details.find((item) => item.collectionName === mapping.collectionName);
+    if (missingCount > 0 && detail) {
+      detail.errors.push("Source archive contains " + missingCount +
+        " top-level documents without a normalized PostgreSQL record or an audited deletion.");
+      detail.failedDocs += missingCount;
       detail.passedDocs = Math.max(0, detail.totalDocs - detail.failedDocs);
       totalErrors += 1;
     }

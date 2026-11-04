@@ -133,7 +133,6 @@ function validateNormalizedDocument(
   } else if (collectionName === "audit_logs" && !asString(data.action)) {
     throw new Error("An audit log record is missing its action.");
   }
-  }
 }
 
 async function insertGenericDocument(

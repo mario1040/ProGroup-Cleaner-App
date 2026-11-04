@@ -175,7 +175,7 @@ export default function PhotoCapture({ label, onPhotoUploaded, required = true, 
         };
         console.log("[PhotoCapture] Photo uploaded successfully to Cloudinary:", uploadedMetadata);
       } catch (uploadError) {
-        // Keep the intentional Firestore-safe fallback for CORS/configuration failures.
+        // Keep the image fallback for browser CORS/configuration failures.
         if (!payload.startsWith("data:image/")) throw uploadError;
         usedInlineFallback = true;
         uploadedMetadata = {

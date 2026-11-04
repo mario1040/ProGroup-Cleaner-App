@@ -92,7 +92,7 @@ async function main(): Promise<void> {
         process.stderr.write(JSON.stringify({
           task_id: row.id,
           error: error instanceof Error ? error.message : "Photo reconciliation error",
-        }) + "\\n");
+        }) + "\n");
         continue;
       }
       if (!before && !after) continue;

@@ -20,9 +20,49 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-    # Deliberately no host port: database is reachable only on naris-private.
     security_opt:
       - no-new-privileges:true
+
+  naris-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: naris-migrate
+    restart: "no"
+    env_file:
+      - .env.naris
+    environment:
+      DATABASE_URL: postgresql://${NARIS_DB_USER}:${NARIS_DB_PASSWORD}@naris-postgres:5432/naris_ops
+      PG_SSL: "false"
+    command: ["npm", "run", "db:migrate"]
+    depends_on:
+      naris-postgres:
+        condition: service_healthy
+    networks:
+      - naris-private
+
+  naris-import:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: naris-import
+    profiles: ["import"]
+    restart: "no"
+    env_file:
+      - .env.naris
+    environment:
+      DATABASE_URL: postgresql://${NARIS_DB_USER}:${NARIS_DB_PASSWORD}@naris-postgres:5432/naris_ops
+      PG_SSL: "false"
+    volumes:
+      - ./naris_ops_firestore_backup:/backup:ro
+    command: ["npm", "run", "data:import-firestore", "--", "--dry-run", "--backup-dir", "/backup"]
+    depends_on:
+      naris-migrate:
+        condition: service_completed_successfully
+    networks:
+      - naris-private
 
   naris-api:
     build:
@@ -41,10 +81,11 @@ services:
       APP_TIME_ZONE: ${APP_TIME_ZONE:-Africa/Cairo}
       APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:-http://localhost:8081}
       SESSION_COOKIE_SAMESITE: Lax
+      TASK_GENERATION_ENABLED: ${TASK_GENERATION_ENABLED:-false}
       DATABASE_URL: postgresql://${NARIS_DB_USER}:${NARIS_DB_PASSWORD}@naris-postgres:5432/naris_ops
     depends_on:
-      naris-postgres:
-        condition: service_healthy
+      naris-migrate:
+        condition: service_completed_successfully
     networks:
       - naris-private
     healthcheck:

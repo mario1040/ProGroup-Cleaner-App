@@ -1,0 +1,355 @@
+import "dotenv/config";
+import { readdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
+import { Pool, type PoolClient } from "pg";
+
+interface FirestoreDocument {
+  name: string;
+  fields?: Record<string, unknown>;
+  createTime?: string;
+  updateTime?: string;
+}
+interface FirestorePage { documents?: FirestoreDocument[]; nextPageToken?: string; }
+interface CollectionSummary { pages: number; documents: number; }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function decodeFirestoreValue(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  if ("stringValue" in value) return value.stringValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return Number(value.doubleValue);
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("nullValue" in value) return null;
+  if ("timestampValue" in value) return value.timestampValue;
+  if ("referenceValue" in value) return value.referenceValue;
+  if ("bytesValue" in value) return value.bytesValue;
+  if ("geoPointValue" in value) return value.geoPointValue;
+  if ("arrayValue" in value && isRecord(value.arrayValue)) {
+    const values = value.arrayValue.values;
+    return Array.isArray(values) ? values.map(decodeFirestoreValue) : [];
+  }
+  if ("mapValue" in value && isRecord(value.mapValue)) {
+    return decodeFirestoreFields(value.mapValue.fields);
+  }
+  return value;
+}
+
+function decodeFirestoreFields(fields: unknown): Record<string, unknown> {
+  if (!isRecord(fields)) return {};
+  return Object.fromEntries(
+    Object.entries(fields).map(([key, value]) => [key, decodeFirestoreValue(value)]),
+  );
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+function asDate(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+function asDateOnly(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+}
+function getDocumentPath(document: FirestoreDocument): string {
+  const marker = "/documents/";
+  const index = document.name.indexOf(marker);
+  if (index < 0) throw new Error("A Firestore document has an invalid resource name.");
+  return document.name.slice(index + marker.length);
+}
+function sanitizeCollectionData(
+  collectionName: string,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  if (collectionName !== "users") return data;
+  const { password: _passwordRecord, ...safeData } = data;
+  return safeData;
+}
+function validateUserPasswordRecord(value: unknown): "salted_sha256" | "legacy_plaintext" | "missing" {
+  if (typeof value !== "string" || value.length === 0) return "missing";
+  return /^[a-f0-9]{16,}:[a-f0-9]{64}$/i.test(value)
+    ? "salted_sha256"
+    : "legacy_plaintext";
+}
+
+async function insertGenericDocument(
+  client: PoolClient,
+  collectionName: string,
+  documentPath: string,
+  documentId: string,
+  data: Record<string, unknown>,
+  document: FirestoreDocument,
+): Promise<void> {
+  const safeData = sanitizeCollectionData(collectionName, data);
+  await client.query(
+    "INSERT INTO firestore_documents " +
+      "(collection_name, document_path, document_id, data, source_create_time, source_update_time) " +
+      "VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6::timestamptz) " +
+      "ON CONFLICT (collection_name, document_path) DO UPDATE SET " +
+      "document_id = EXCLUDED.document_id, data = EXCLUDED.data, " +
+      "source_create_time = EXCLUDED.source_create_time, " +
+      "source_update_time = EXCLUDED.source_update_time, imported_at = NOW()",
+    [
+      collectionName, documentPath, documentId, JSON.stringify(safeData),
+      asDate(document.createTime), asDate(document.updateTime),
+    ],
+  );
+}
+
+async function insertNormalizedDocument(
+  client: PoolClient,
+  collectionName: string,
+  id: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const safeData = sanitizeCollectionData(collectionName, data);
+
+  if (collectionName === "users") {
+    const username = asString(data.username);
+    const fullName = asString(data.full_name);
+    const role = asString(data.role);
+    if (!username || !fullName || !role) {
+      throw new Error("A user record is missing required account fields.");
+    }
+    if (!["admin", "supervisor", "cleaner"].includes(role)) {
+      throw new Error("A user record contains an unsupported role value.");
+    }
+    await client.query(
+      "INSERT INTO users " +
+        "(id, username, full_name, role, is_active, password_record, raw_data, created_at, updated_at) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::timestamptz, $9::timestamptz) " +
+        "ON CONFLICT (id) DO UPDATE SET username = EXCLUDED.username, " +
+        "full_name = EXCLUDED.full_name, role = EXCLUDED.role, " +
+        "is_active = EXCLUDED.is_active, " +
+        "password_record = COALESCE(EXCLUDED.password_record, users.password_record), " +
+        "raw_data = EXCLUDED.raw_data, updated_at = EXCLUDED.updated_at",
+      [
+        id, username, fullName, role, asBoolean(data.is_active), asString(data.password),
+        JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
+      ],
+    );
+    return;
+  }
+
+  if (collectionName === "locations") {
+    const name = asString(data.name);
+    if (!name) throw new Error("A location record is missing its name.");
+    await client.query(
+      "INSERT INTO locations (id, name, address, raw_data) VALUES ($1, $2, $3, $4::jsonb) " +
+        "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, " +
+        "address = EXCLUDED.address, raw_data = EXCLUDED.raw_data",
+      [id, name, asString(data.address), JSON.stringify(safeData)],
+    );
+    return;
+  }
+
+  if (collectionName === "zones") {
+    const name = asString(data.name);
+    if (!name) throw new Error("A zone record is missing its name.");
+    await client.query(
+      "INSERT INTO zones (id, location_id, name, responsible_employee_id, raw_data) " +
+        "VALUES ($1, $2, $3, $4, $5::jsonb) " +
+        "ON CONFLICT (id) DO UPDATE SET location_id = EXCLUDED.location_id, " +
+        "name = EXCLUDED.name, responsible_employee_id = EXCLUDED.responsible_employee_id, " +
+        "raw_data = EXCLUDED.raw_data",
+      [id, asString(data.location_id), name, asString(data.responsible_employee_id), JSON.stringify(safeData)],
+    );
+    return;
+  }
+
+  if (collectionName === "sop_items") {
+    const title = asString(data.title);
+    const zoneId = asString(data.zone_id);
+    const frequency = asString(data.frequency);
+    if (!title || !zoneId || !frequency) {
+      throw new Error("An SOP record is missing required scheduling fields.");
+    }
+    await client.query(
+      "INSERT INTO sop_items " +
+        "(id, title, task_code, zone_id, frequency, recurrence_days, scheduled_time, " +
+        "scheduled_times, default_assignee_id, is_active, raw_data, created_at, updated_at) " +
+        "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10, $11::jsonb, $12::timestamptz, $13::timestamptz) " +
+        "ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, task_code = EXCLUDED.task_code, " +
+        "zone_id = EXCLUDED.zone_id, frequency = EXCLUDED.frequency, " +
+        "recurrence_days = EXCLUDED.recurrence_days, scheduled_time = EXCLUDED.scheduled_time, " +
+        "scheduled_times = EXCLUDED.scheduled_times, default_assignee_id = EXCLUDED.default_assignee_id, " +
+        "is_active = EXCLUDED.is_active, raw_data = EXCLUDED.raw_data, " +
+        "created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at",
+      [
+        id, title, asString(data.task_code), zoneId, frequency,
+        JSON.stringify(asStringArray(data.recurrence_days)), asString(data.scheduled_time),
+        JSON.stringify(asStringArray(data.scheduled_times)), asString(data.default_assignee_id),
+        asBoolean(data.is_active), JSON.stringify(safeData),
+        asDate(data.created_at), asDate(data.updated_at),
+      ],
+    );
+    return;
+  }
+
+  if (collectionName === "task_instances") {
+    const zoneId = asString(data.zone_id);
+    const assignedTo = asString(data.assigned_to);
+    const title = asString(data.title);
+    const dueDate = asDateOnly(data.due_date);
+    const taskType = asString(data.task_type) || "one_time";
+    const status = asString(data.status) || "pending";
+    if (!zoneId || !assignedTo || !title || !dueDate) {
+      throw new Error("A task instance is missing required task fields.");
+    }
+    await client.query(
+      "INSERT INTO task_instances " +
+        "(id, template_id, sop_item_id, zone_id, assigned_to, assigned_by, task_type, " +
+        "parent_instance_id, title, description, due_date, due_time, status, raw_data, created_at, updated_at) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12, $13, $14::jsonb, $15::timestamptz, $16::timestamptz) " +
+        "ON CONFLICT (id) DO UPDATE SET template_id = EXCLUDED.template_id, " +
+        "sop_item_id = EXCLUDED.sop_item_id, zone_id = EXCLUDED.zone_id, " +
+        "assigned_to = EXCLUDED.assigned_to, assigned_by = EXCLUDED.assigned_by, " +
+        "task_type = EXCLUDED.task_type, parent_instance_id = EXCLUDED.parent_instance_id, " +
+        "title = EXCLUDED.title, description = EXCLUDED.description, due_date = EXCLUDED.due_date, " +
+        "due_time = EXCLUDED.due_time, status = EXCLUDED.status, raw_data = EXCLUDED.raw_data, " +
+        "created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at",
+      [
+        id, asString(data.template_id), asString(data.sop_item_id), zoneId,
+        assignedTo, asString(data.assigned_by), taskType, asString(data.parent_instance_id),
+        title, asString(data.description), dueDate, asString(data.due_time), status,
+        JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
+      ],
+    );
+  }
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const dryRun = args.includes("--dry-run");
+  const backupArgIndex = args.indexOf("--backup-dir");
+  const backupDir = backupArgIndex >= 0
+    ? args[backupArgIndex + 1]
+    : path.join(homedir(), "naris_ops_firestore_backup");
+
+  if (!backupDir || backupDir.startsWith("--")) {
+    throw new Error("Pass a valid directory after --backup-dir.");
+  }
+
+  const collectionEntries = await readdir(backupDir, { withFileTypes: true });
+  const collections = collectionEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  if (collections.length === 0) {
+    throw new Error("No collection folders were found in the backup directory.");
+  }
+
+  if (!dryRun && !process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL environment variable is required.");
+  }
+  const pool = dryRun ? null : new Pool({ connectionString: process.env.DATABASE_URL });
+
+  const summary = new Map<string, CollectionSummary>();
+  const usernames = new Set<string>();
+  let saltedPasswordRecords = 0;
+  let legacyPasswordRecords = 0;
+  let missingPasswordRecords = 0;
+  let totalDocuments = 0;
+
+  try {
+    for (const collectionName of collections) {
+      const collectionDir = path.join(backupDir, collectionName);
+      const pageFiles = (await readdir(collectionDir))
+        .filter((file) => /^page-\d+\.json$/.test(file))
+        .sort();
+      const collectionSummary = { pages: 0, documents: 0 };
+      summary.set(collectionName, collectionSummary);
+
+      for (const pageFile of pageFiles) {
+        const pagePath = path.join(collectionDir, pageFile);
+        const page = JSON.parse(await readFile(pagePath, "utf8")) as FirestorePage;
+        const documents = Array.isArray(page.documents) ? page.documents : [];
+        const client = pool ? await pool.connect() : null;
+
+        try {
+          if (client) await client.query("BEGIN");
+          for (const document of documents) {
+            const documentPath = getDocumentPath(document);
+            const pathParts = documentPath.split("/");
+            if (pathParts.length < 2 || pathParts.length % 2 !== 0) {
+              throw new Error("A Firestore backup document path is malformed.");
+            }
+            const documentId = pathParts[pathParts.length - 1];
+            const actualCollection = pathParts[pathParts.length - 2];
+            const data = decodeFirestoreFields(document.fields);
+
+            if (actualCollection === "users") {
+              const username = asString(data.username);
+              if (username) {
+                const normalizedUsername = username.trim().toLowerCase();
+                if (usernames.has(normalizedUsername)) {
+                  throw new Error("Duplicate usernames were found; resolve them before importing.");
+                }
+                usernames.add(normalizedUsername);
+              }
+              const passwordState = validateUserPasswordRecord(data.password);
+              if (passwordState === "salted_sha256") saltedPasswordRecords += 1;
+              else if (passwordState === "legacy_plaintext") legacyPasswordRecords += 1;
+              else missingPasswordRecords += 1;
+            }
+
+            if (client) {
+              await insertGenericDocument(
+                client, actualCollection, documentPath, documentId, data, document,
+              );
+              if (pathParts.length === 2) {
+                await insertNormalizedDocument(client, actualCollection, documentId, data);
+              }
+            }
+            collectionSummary.documents += 1;
+            totalDocuments += 1;
+          }
+          if (client) await client.query("COMMIT");
+          collectionSummary.pages += 1;
+        } catch (error) {
+          if (client) await client.query("ROLLBACK").catch(() => undefined);
+          throw error;
+        } finally {
+          client?.release();
+        }
+      }
+    }
+  } finally {
+    if (pool) await pool.end();
+  }
+
+  process.stdout.write(JSON.stringify({
+    mode: dryRun ? "dry-run" : "import",
+    totalDocuments,
+    collections: Object.fromEntries(summary),
+    passwordRecordAudit: {
+      saltedSha256: saltedPasswordRecords,
+      legacyPlaintext: legacyPasswordRecords,
+      missing: missingPasswordRecords,
+    },
+  }, null, 2) + "\n");
+}
+
+main().catch((error: unknown) => {
+  process.stderr.write(
+    "Firestore import failed: " +
+      (error instanceof Error ? error.message : "Unknown error") +
+      "\n",
+  );
+  process.exitCode = 1;
+});

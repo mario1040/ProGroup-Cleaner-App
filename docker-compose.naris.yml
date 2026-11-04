@@ -99,7 +99,7 @@ services:
       PG_POOL_MAX: ${PG_POOL_MAX:-10}
       PG_SSL: "false"
       APP_TIME_ZONE: ${APP_TIME_ZONE:-Africa/Cairo}
-      APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:-http://localhost:8081}
+      APP_ALLOWED_ORIGINS: "${APP_ALLOWED_ORIGINS:-http://localhost:8081},https://naris.bezaverse.com"
       SESSION_COOKIE_SAMESITE: Lax
       TASK_GENERATION_ENABLED: ${TASK_GENERATION_ENABLED:-false}
       DATABASE_URL: postgresql://${NARIS_DB_USER}:${NARIS_DB_PASSWORD}@naris-postgres:5432/naris_ops

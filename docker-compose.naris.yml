@@ -1,0 +1,88 @@
+name: naris-ops
+
+services:
+  naris-postgres:
+    image: postgres:17-alpine
+    container_name: naris-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: naris_ops
+      POSTGRES_USER: ${NARIS_DB_USER:?Set NARIS_DB_USER in .env.naris}
+      POSTGRES_PASSWORD: ${NARIS_DB_PASSWORD:?Set NARIS_DB_PASSWORD in .env.naris}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - naris_ops_pg_data:/var/lib/postgresql/data
+    networks:
+      - naris-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NARIS_DB_USER} -d naris_ops"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    # Deliberately no host port: database is reachable only on naris-private.
+    security_opt:
+      - no-new-privileges:true
+
+  naris-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: naris-api
+    restart: unless-stopped
+    env_file:
+      - .env.naris
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      PG_SSL: "false"
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-Africa/Cairo}
+      APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:-http://localhost:8081}
+      SESSION_COOKIE_SAMESITE: Lax
+      DATABASE_URL: postgresql://${NARIS_DB_USER}:${NARIS_DB_PASSWORD}@naris-postgres:5432/naris_ops
+    depends_on:
+      naris-postgres:
+        condition: service_healthy
+    networks:
+      - naris-private
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+  naris-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_CLOUDINARY_CLOUD_NAME: ${VITE_CLOUDINARY_CLOUD_NAME:-}
+        VITE_CLOUDINARY_UPLOAD_PRESET: ${VITE_CLOUDINARY_UPLOAD_PRESET:-}
+    container_name: naris-web
+    restart: unless-stopped
+    ports:
+      - "${NARIS_WEB_PORT:-8081}:80"
+    depends_on:
+      naris-api:
+        condition: service_healthy
+    networks:
+      - naris-private
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  naris-private:
+    name: naris-private
+    driver: bridge
+    internal: true
+
+volumes:
+  naris_ops_pg_data:
+    name: naris_ops_pg_data

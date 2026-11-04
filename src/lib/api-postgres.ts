@@ -9,7 +9,7 @@ import type {
 } from "../types";
 import { uploadToCloudinary } from "./cloudinary";
 
-const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "https://naris-api.bezaverse.com").replace(/\/$/, "");
 
 type ApiEnvelope<T> = { data: T; meta?: Record<string, unknown> };
 

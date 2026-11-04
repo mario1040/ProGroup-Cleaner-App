@@ -1861,6 +1861,36 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
     res.status(400).json({ error: "due_time must use HH:MM" }); return;
   }
 
+  for (const field of ["photo_before_public_id", "photo_after_public_id"]) {
+    const value = updates[field];
+    if (value !== undefined && (typeof value !== "string" || value.length > 500)) {
+      res.status(400).json({ error: field + " must be a string up to 500 characters" }); return;
+    }
+  }
+  for (const field of ["photo_before_url", "photo_after_url"]) {
+    const value = updates[field];
+    if (value !== undefined && (typeof value !== "string" || value.length > 2_000_000 ||
+        !(value.startsWith("https://") || value.startsWith("data:image/")))) {
+      res.status(400).json({ error: field + " must be a valid HTTPS or legacy image data URL" }); return;
+    }
+  }
+  for (const field of ["photo_before_size", "photo_after_size"]) {
+    const value = updates[field];
+    if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 15 * 1024 * 1024)) {
+      res.status(400).json({ error: field + " must be a non-negative image size up to 15 MB" }); return;
+    }
+  }
+  for (const field of ["photo_before_mime_type", "photo_after_mime_type"]) {
+    const value = updates[field];
+    if (value !== undefined && (typeof value !== "string" || !["image/jpeg", "image/png", "image/webp"].includes(value))) {
+      res.status(400).json({ error: field + " is not a supported image MIME type" }); return;
+    }
+  }
+  if (updates.photo_capture_status !== undefined &&
+      !["pending", "uploading", "uploaded", "failed"].includes(String(updates.photo_capture_status))) {
+    res.status(400).json({ error: "Unsupported photo_capture_status" }); return;
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

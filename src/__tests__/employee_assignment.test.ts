@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { isEligibleCleaner, getEligibleCleaners } from '../lib/api-postgres';
 import { selectFlexibleAssignee } from '../lib/task-utils';
 import { Profile, TaskInstance, SOPItem, Zone } from '../types';

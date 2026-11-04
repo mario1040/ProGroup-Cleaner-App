@@ -964,6 +964,38 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
       failedDocs: 0, errors: [], warnings: [],
     });
   }
+  const sourceMappings = [
+    ["users", "users"],
+    ["locations", "locations"],
+    ["zones", "zones"],
+    ["sop_items", "sop_items"],
+    ["task_templates", "task_templates"],
+    ["task_instances", "task_instances"],
+    ["operational_tasks", "operational_tasks"],
+    ["device_switches", "device_switches"],
+    ["kpi_snapshots", "kpi_snapshots"],
+    ["audit_logs", "audit_logs"],
+  ] as const;
+  for (const [collectionName, tableName] of sourceMappings) {
+    const parity = await pool.query<{ source_count: number; normalized_count: number }>(
+      "SELECT " +
+      "(SELECT COUNT(*)::int FROM firestore_documents WHERE collection_name = $1 " +
+      "AND array_length(string_to_array(document_path, '/'), 1) = 2) AS source_count, " +
+      "(SELECT COUNT(*)::int FROM " + tableName + ") AS normalized_count",
+      [collectionName],
+    );
+    const sourceCount = Number(parity.rows[0]?.source_count || 0);
+    const normalizedCount = Number(parity.rows[0]?.normalized_count || 0);
+    const detail = details.find((item) => item.collectionName === collectionName);
+    if (sourceCount !== normalizedCount && detail) {
+      const difference = Math.abs(sourceCount - normalizedCount);
+      detail.errors.push("Top-level source archive count (" + sourceCount +
+        ") does not match normalized PostgreSQL count (" + normalizedCount + ").");
+      detail.failedDocs += difference;
+      detail.passedDocs = Math.max(0, detail.totalDocs - detail.failedDocs);
+      totalErrors += 1;
+    }
+  }
   const checks = [
     ["zones", "SELECT COUNT(*)::int AS count FROM zones z LEFT JOIN locations l ON l.id = z.location_id WHERE z.location_id IS NOT NULL AND l.id IS NULL", "Zone records reference missing locations."],
     ["zones", "SELECT COUNT(*)::int AS count FROM zones z LEFT JOIN users u ON u.id = z.responsible_employee_id WHERE z.responsible_employee_id IS NOT NULL AND u.id IS NULL", "Zone records reference missing responsible employees."],
@@ -973,6 +1005,8 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     ["operational_tasks", "SELECT COUNT(*)::int AS count FROM operational_tasks t LEFT JOIN zones z ON z.id = t.zone_id WHERE t.zone_id IS NOT NULL AND z.id IS NULL", "Operational tasks reference missing zones."],
     ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches d LEFT JOIN zones z ON z.id = d.zone_id WHERE d.zone_id IS NOT NULL AND z.id IS NULL", "Device switches reference missing zones."],
     ["kpi_snapshots", "SELECT COUNT(*)::int AS count FROM kpi_snapshots k LEFT JOIN users u ON u.id = k.profile_id WHERE k.profile_id IS NOT NULL AND u.id IS NULL", "KPI snapshots reference missing users."],
+    ["task_templates", "SELECT COUNT(*)::int AS count FROM task_templates tt LEFT JOIN zones z ON z.id = tt.zone_id WHERE z.id IS NULL", "Task templates reference missing zones."],
+    ["task_media", "SELECT COUNT(*)::int AS count FROM task_media m LEFT JOIN task_instances t ON t.id = m.task_id WHERE t.id IS NULL", "Task media references missing tasks."],
   ] as const;
   for (const [collectionName, sql, message] of checks) {
     const result = await pool.query<{ count: number }>(sql);

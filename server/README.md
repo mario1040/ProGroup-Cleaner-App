@@ -51,6 +51,7 @@ Start the API after setting server-only environment variables:
 DATABASE_URL=postgresql://APP_USER:APP_PASSWORD@POSTGRES_HOST:5432/naris_ops
 API_PORT=4000
 PG_POOL_MAX=10
+TASK_GENERATION_ENABLED=false
 PG_SSL=false
 APP_TIME_ZONE=Africa/Cairo
 APP_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -79,7 +80,7 @@ The API uses opaque random session tokens; only token hashes are stored in Postg
 
 The generator uses the same recurrence and assignment policy as the existing app: active SOPs only; configured scheduled times; Arabic weekday recurrence; default SOP assignee, then zone responsible employee, then least-loaded active cleaner. It intentionally does not add shift/work-day filtering that the source implementation did not have.
 
-The API process checks the current business date at startup and every 60 seconds. It generates the day's recurring tasks once a successful run exists. Generation uses a transaction, a per-date advisory lock, deterministic task IDs, and a uniqueness index to protect against duplicate tasks across concurrent API instances. Failed runs are logged and retried on a later check.
+Automatic generation is opt-in and stays disabled unless `TASK_GENERATION_ENABLED=true`. This prevents an empty database from recording a successful zero-task run before the Firestore import. After import and same-date reconciliation, enable the flag; the API then checks the current business date at startup and every 60 seconds. It generates the day's recurring tasks once a successful run exists. Generation uses a transaction, a per-date advisory lock, deterministic task IDs, and a uniqueness index to protect against duplicate tasks across concurrent API instances. Failed runs are logged and retried on a later check.
 
 Manual one-off generation remains available:
 

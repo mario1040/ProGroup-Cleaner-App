@@ -48,7 +48,9 @@ function mapTask(row: Record<string, unknown>): ExistingTask {
   return {
     id: String(row.id),
     assigned_to: String(row.assigned_to),
-    due_date: String(row.due_date).slice(0, 10),
+    due_date: row.due_date instanceof Date
+      ? row.due_date.toISOString().slice(0, 10)
+      : String(row.due_date).slice(0, 10),
     task_type: String(row.task_type),
   };
 }

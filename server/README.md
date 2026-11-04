@@ -1,10 +1,10 @@
-# Naris Ops PostgreSQL Task Generator
+# Naris Ops PostgreSQL Migration Foundation
 
-This is the first isolated backend slice for the Firestore-to-PostgreSQL migration. It does not modify the existing React app or write to Firebase.
+This is an isolated backend foundation for the Firestore-to-PostgreSQL migration. The existing React app and Firebase production data are not modified by these tools.
 
-## Compatibility rules implemented
+## Current task-generator compatibility
 
-The planner mirrors the current recurring-task behavior in `src/lib/api.ts`:
+The planner mirrors the recurring-task behavior in `src/lib/api.ts`:
 
 1. Only active SOP items are considered.
 2. `scheduled_times` wins; otherwise `scheduled_time`; otherwise `09:00`.
@@ -20,20 +20,60 @@ The old generator does not filter by `work_days` or shift times, so this compati
 
 ## Database setup
 
-Apply `server/db/schema.sql` to the dedicated PostgreSQL database:
+Create/use a dedicated PostgreSQL database (for example, `naris_ops`) and apply the schema:
 
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/schema.sql
 ```
 
-The schema keeps source document IDs and raw Firestore documents in `raw_data`. Legacy template/SOP references remain text rather than strict foreign keys because the live audit found historical references that do not match current master records.
+The schema includes:
+- `firestore_documents`: archival mirror for all source collections, including collections not yet normalized.
+- normalized `users`, `locations`, `zones`, `sop_items`, and `task_instances` tables for the first backend slice.
+- `task_generation_runs` for generator execution history.
 
-## Run once
+Firestore document IDs are preserved. Legacy template/SOP references remain text rather than strict foreign keys because the live audit found historical references that do not match current master records.
 
-Install the added dependencies and configure `DATABASE_URL`:
+User password records are kept in the server-only `users.password_record` column. They are excluded from `raw_data` and from the generic archive table. The importer recognizes the existing salted SHA-256 format without printing any password values. It blocks import if plaintext password records are found; rotate those credentials in the source system before retrying.
+
+## Firestore backup import
+
+The importer reads the existing REST backup directory created in Cloud Shell. It is page-based and idempotent, so it can be rerun safely after a failed page.
+
+First run a read-only validation (no database connection or writes):
 
 ```bash
-npm install
+npm install --legacy-peer-deps
+npm run data:import-firestore -- --dry-run
+```
+
+If the backup is stored elsewhere:
+
+```bash
+npm run data:import-firestore -- --dry-run --backup-dir "$HOME/naris_ops_firestore_backup"
+```
+
+Review the aggregate counts, duplicate-username check, and password-format audit. Do not share the backup files or user records in chat.
+
+After the dry run is clean and the PostgreSQL database is ready:
+
+```bash
+npm run data:import-firestore
+```
+
+The import stores all top-level collections in `firestore_documents`. It additionally populates the five normalized tables used by the task engine. Other collections remain safely preserved in the archive table until their normalized schemas and APIs are implemented.
+
+## Run the recurring task generator
+
+Configure server-only variables in `.env`:
+
+```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/naris_ops
+APP_TIME_ZONE=Africa/Cairo
+```
+
+Then run:
+
+```bash
 npm run tasks:generate
 npm run tasks:generate -- 2026-11-04
 ```
@@ -42,7 +82,7 @@ The default date is calculated in `APP_TIME_ZONE` (defaults to `Africa/Cairo`).
 
 ## Scheduling
 
-Run this command once daily from the host scheduler after database import is validated. Example cron (03:00 Cairo server time):
+Run the generator once daily from the host scheduler only after import validation and a same-date comparison against Firebase. Example cron (03:00 Cairo server time):
 
 ```cron
 0 3 * * * cd /path/to/ProGroup-Cleaner-App && npm run tasks:generate >> /var/log/naris-task-generator.log 2>&1
@@ -52,8 +92,10 @@ Do not enable this cron against production until the migrated data has been impo
 
 ## Safety
 
+- The importer uses one transaction per backup page and upserts by original Firestore document path.
+- User password values are excluded from generic JSON archives and are never printed.
 - Generation runs in a PostgreSQL transaction and uses a per-date advisory lock.
 - Deterministic IDs plus a unique recurring-occurrence index protect against duplicate generation.
-- It writes only recurring tasks; rework and one-time tasks are outside this generator.
-- Every attempt is recorded in `task_generation_runs`.
-- No Firebase records are modified.
+- The generator writes only recurring tasks; rework and one-time tasks are outside this generator.
+- Every generation attempt is recorded in `task_generation_runs`.
+- Neither importer nor generator writes to Firebase.

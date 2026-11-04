@@ -52,6 +52,11 @@ function asString(value: unknown): string | null {
 function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
@@ -117,6 +122,17 @@ function validateNormalizedDocument(
     ) {
       throw new Error("A task instance is missing required task fields.");
     }
+  } else if (collectionName === "operational_tasks") {
+    if (!asString(data.title) || !asString(data.zone_id)) {
+      throw new Error("An operational task is missing required title or zone fields.");
+    }
+  } else if (collectionName === "device_switches") {
+    if (!asString(data.code) || !asString(data.label)) {
+      throw new Error("A device switch is missing its code or label.");
+    }
+  } else if (collectionName === "audit_logs" && !asString(data.action)) {
+    throw new Error("An audit log record is missing its action.");
+  }
   }
 }
 
@@ -241,6 +257,65 @@ async function insertNormalizedDocument(
         JSON.stringify(safeData), asDate(data.created_at), asDate(data.updated_at),
       ],
     );
+    return;
+  }
+
+  if (collectionName === "operational_tasks") {
+    await client.query(
+      "INSERT INTO operational_tasks (id, zone_id, title, description, responsible_employee_id, is_active, raw_data) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb) " +
+        "ON CONFLICT (id) DO UPDATE SET zone_id = EXCLUDED.zone_id, title = EXCLUDED.title, " +
+        "description = EXCLUDED.description, responsible_employee_id = EXCLUDED.responsible_employee_id, " +
+        "is_active = EXCLUDED.is_active, raw_data = EXCLUDED.raw_data",
+      [id, asString(data.zone_id), asString(data.title) || "", asString(data.description),
+        asString(data.responsible_employee_id), asBoolean(data.is_active, true), JSON.stringify(safeData)],
+    );
+    return;
+  }
+
+  if (collectionName === "device_switches") {
+    await client.query(
+      "INSERT INTO device_switches (id, code, label, zone_id, panel_location, raw_data) " +
+        "VALUES ($1, $2, $3, $4, $5, $6::jsonb) " +
+        "ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, label = EXCLUDED.label, " +
+        "zone_id = EXCLUDED.zone_id, panel_location = EXCLUDED.panel_location, raw_data = EXCLUDED.raw_data",
+      [id, asString(data.code) || "", asString(data.label) || "", asString(data.zone_id),
+        asString(data.panel_location), JSON.stringify(safeData)],
+    );
+    return;
+  }
+
+  if (collectionName === "kpi_snapshots") {
+    await client.query(
+      "INSERT INTO kpi_snapshots (id, profile_id, period_type, period_start, period_end, tasks_assigned, " +
+        "tasks_completed_on_time, tasks_late, tasks_reworked, compliance_rate, avg_execution_time_minutes, " +
+        "quality_score, supervisor_rating, raw_data, computed_at) " +
+        "VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::timestamptz) " +
+        "ON CONFLICT (id) DO UPDATE SET profile_id = EXCLUDED.profile_id, period_type = EXCLUDED.period_type, " +
+        "period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end, tasks_assigned = EXCLUDED.tasks_assigned, " +
+        "tasks_completed_on_time = EXCLUDED.tasks_completed_on_time, tasks_late = EXCLUDED.tasks_late, " +
+        "tasks_reworked = EXCLUDED.tasks_reworked, compliance_rate = EXCLUDED.compliance_rate, " +
+        "avg_execution_time_minutes = EXCLUDED.avg_execution_time_minutes, quality_score = EXCLUDED.quality_score, " +
+        "supervisor_rating = EXCLUDED.supervisor_rating, raw_data = EXCLUDED.raw_data, computed_at = EXCLUDED.computed_at",
+      [id, asString(data.profile_id), asString(data.period_type), asDateOnly(data.period_start),
+        asDateOnly(data.period_end), asNumber(data.tasks_assigned), asNumber(data.tasks_completed_on_time),
+        asNumber(data.tasks_late), asNumber(data.tasks_reworked), asNumber(data.compliance_rate),
+        asNumber(data.avg_execution_time_minutes), asNumber(data.quality_score), asNumber(data.supervisor_rating),
+        JSON.stringify(safeData), asDate(data.computed_at)],
+    );
+    return;
+  }
+
+  if (collectionName === "audit_logs") {
+    await client.query(
+      "INSERT INTO audit_logs (id, task_id, action, metadata, raw_data, created_at) " +
+        "VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::timestamptz) " +
+        "ON CONFLICT (id) DO UPDATE SET task_id = EXCLUDED.task_id, action = EXCLUDED.action, " +
+        "metadata = EXCLUDED.metadata, raw_data = EXCLUDED.raw_data, created_at = EXCLUDED.created_at",
+      [id, asString(data.task_id), asString(data.action) || "unknown",
+        JSON.stringify(isRecord(data.metadata) ? data.metadata : {}), JSON.stringify(safeData), asDate(data.created_at)],
+    );
+    return;
   }
 }
 

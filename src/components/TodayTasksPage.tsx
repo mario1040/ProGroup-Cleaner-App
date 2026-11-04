@@ -23,7 +23,6 @@ import { isOnline } from "../lib/offlineManager";
 import { isUsableImageUrl } from "../lib/cloudinary";
 import PhotoCapture from "./PhotoCapture";
 import ProfessorLogo from "./ProfessorLogo";
-import FirestoreQuotaBanner from "./FirestoreQuotaBanner";
 
 const TaskTimer = ({ task }: { task: TaskInstance & { zone?: Zone; template?: TaskTemplate } }) => {
   const [elapsed, setElapsed] = useState<number>(0);
@@ -404,7 +403,6 @@ export default function TodayTasksPage({
         </div>
       )}
 
-      {isOnlineState && <FirestoreQuotaBanner onRetry={loadTodayTasks} />}
 
       {/* Toast Alert */}
       {toast && (
@@ -502,7 +500,7 @@ export default function TodayTasksPage({
                 </>
               )}
             </div>
-            <span className="text-[10px] text-slate-400 font-mono">Firebase Online Mode</span>
+            <span className="text-[10px] text-slate-400 font-mono">PostgreSQL API Mode</span>
           </div>
         </div>
       </div>
@@ -999,7 +997,7 @@ export default function TodayTasksPage({
               </div>
               <p className="text-[10px] text-slate-400 mt-1 leading-normal text-right">
                 {isOnlineState 
-                  ? "تطبيق Naris Ops متصل بخدمات Firebase السحابية ومزامن بالكامل." 
+                  ? "تطبيق Naris Ops متصل بواجهة PostgreSQL API." 
                   : "يرجى إعادة الاتصال بالشبكة للمتابعة وتحديث حالة المهام."}
               </p>
             </div>

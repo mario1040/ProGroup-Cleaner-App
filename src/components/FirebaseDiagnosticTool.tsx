@@ -117,7 +117,7 @@ export default function FirebaseDiagnosticTool() {
             </div>
             {health.missing.length > 0 && <p className="text-amber-700">الجداول الناقصة: {health.missing.join(", ")}</p>}
             {health.message && <p className="break-words text-rose-600">{health.message}</p>}
-            <p className="break-all text-slate-400">API: {baseUrl || "نفس نطاق الواجهة"}</p>
+            <p className="break-all text-slate-400">API: {API_BASE_URL || "نفس نطاق الواجهة"}</p>
             {health.checkedAt && <p className="text-slate-400">آخر فحص: {health.checkedAt}</p>}
           </div>
           <button onClick={() => void checkHealth()} disabled={loading}

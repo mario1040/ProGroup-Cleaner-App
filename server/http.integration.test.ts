@@ -14,6 +14,7 @@ const rejectTaskId = "it_reject_" + suffix;
 const createdUserIds: string[] = [];
 const createdTaskIds: string[] = [taskId, rejectTaskId];
 const createdSopIds: string[] = [];
+const createdTemplateIds: string[] = [];
 const createdInventoryIds: string[] = [];
 let server: ReturnType<typeof app.listen>;
 let baseUrl = "";
@@ -121,6 +122,7 @@ describe("PostgreSQL HTTP integration", () => {
     await pool.query("DELETE FROM inventory_items WHERE id = ANY($1::text[])", [createdInventoryIds]);
     await pool.query("DELETE FROM task_instances WHERE id = ANY($1::text[])", [createdTaskIds]);
     await pool.query("DELETE FROM task_generation_runs WHERE run_date = $1::date", ["2099-05-03"]);
+    await pool.query("DELETE FROM task_templates WHERE id = ANY($1::text[])", [createdTemplateIds]);
     await pool.query("DELETE FROM sop_items WHERE id = ANY($1::text[])", [createdSopIds]);
     await pool.query("DELETE FROM zones WHERE id = $1", [zoneId]);
     await pool.query("DELETE FROM locations WHERE id = $1", [locationId]);
@@ -206,6 +208,26 @@ describe("PostgreSQL HTTP integration", () => {
     }, supervisorCookie);
     expect(sop.response.status).toBe(201);
     createdSopIds.push(sop.payload.data.id);
+
+    const template = await api("/api/task-templates", "POST", {
+      title: "Integration task template", task_code: "IT_TEMPLATE_" + suffix,
+      zone_id: zoneId, frequency: "يومي", category: "نظافة",
+      requires_photo_before: true, requires_photo_after: true,
+      is_active: true, recurrence_days: [], scheduled_times: ["09:00"],
+    }, supervisorCookie);
+    expect(template.response.status).toBe(201);
+    createdTemplateIds.push(template.payload.data.id);
+    const templates = await api("/api/task-templates", "GET", undefined, supervisorCookie);
+    expect(templates.response.status).toBe(200);
+    expect(templates.payload.data.some((item: any) => item.id === template.payload.data.id)).toBe(true);
+    const templateUpdated = await api("/api/task-templates/" + template.payload.data.id, "PATCH", {
+      description: "Persisted template update",
+    }, supervisorCookie);
+    expect(templateUpdated.response.status).toBe(200);
+    expect(templateUpdated.payload.data.description).toBe("Persisted template update");
+    const templateDeleted = await api("/api/task-templates/" + template.payload.data.id, "DELETE", undefined, supervisorCookie);
+    expect(templateDeleted.response.status).toBe(200);
+    createdTemplateIds.pop();
 
     const generated = await generateRecurringTasksForDate(pool, "2099-05-03");
     expect(generated.generated).toBe(1);

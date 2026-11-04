@@ -9,7 +9,8 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "tasks:generate": "tsx server/generate-tasks.ts"
+    "tasks:generate": "tsx server/generate-tasks.ts",
+    "data:import-firestore": "tsx server/import-firestore-backup.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

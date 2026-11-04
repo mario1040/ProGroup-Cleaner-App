@@ -267,6 +267,7 @@ app.get("/health/ready", asyncRoute(async (_req, res) => {
       "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
       "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
       "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
+      "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
       "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
       "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
       "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
@@ -914,6 +915,7 @@ app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor")
     ["sop_items", "SELECT COUNT(*)::int AS count FROM sop_items"],
     ["task_templates", "SELECT COUNT(*)::int AS count FROM task_templates"],
     ["task_instances", "SELECT COUNT(*)::int AS count FROM task_instances"],
+    ["task_media", "SELECT COUNT(*)::int AS count FROM task_media"],
     ["operational_tasks", "SELECT COUNT(*)::int AS count FROM operational_tasks"],
     ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches"],
     ["kpi_snapshots", "SELECT COUNT(*)::int AS count FROM kpi_snapshots"],

@@ -175,7 +175,7 @@ app.use((req, res, next) => {
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Requested-With");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
   }
   if (req.method === "OPTIONS") { res.sendStatus(204); return; }
   next();
@@ -352,6 +352,223 @@ app.get("/api/audit-logs", requireAuth, asyncRoute(async (req, res) => {
     })),
     meta: { limit: rawLimit, offset: rawOffset },
   });
+}));
+
+const sopEditableFields = new Set([
+  "title", "description", "goal", "task_code", "category", "tools_required",
+  "frequency", "recurrence_days", "scheduled_time", "scheduled_times",
+  "zone_id", "default_assignee_id", "is_active",
+  "requires_photo_before", "requires_photo_after", "requires_supervisor_approval",
+  "requires_gps", "estimated_duration_minutes", "reference_image_url", "guide_image_url",
+]);
+
+app.post("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  for (const key of Object.keys(body)) {
+    if (!sopEditableFields.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  const zoneId = typeof body.zone_id === "string" ? body.zone_id : "";
+  const frequency = typeof body.frequency === "string" ? body.frequency : "";
+  if (!title || !zoneId || !frequency) {
+    res.status(400).json({ error: "title, zone_id and frequency are required" }); return;
+  }
+  if (body.recurrence_days !== undefined && !Array.isArray(body.recurrence_days)) {
+    res.status(400).json({ error: "recurrence_days must be an array" }); return;
+  }
+  if (body.scheduled_times !== undefined && !Array.isArray(body.scheduled_times)) {
+    res.status(400).json({ error: "scheduled_times must be an array" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const zone = await client.query("SELECT id FROM zones WHERE id = $1", [zoneId]);
+    if (zone.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown SOP zone" }); return;
+    }
+    const defaultAssignee = typeof body.default_assignee_id === "string" ? body.default_assignee_id : null;
+    if (defaultAssignee) {
+      const eligible = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [defaultAssignee],
+      );
+      if (eligible.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "SOP default assignee must be an active cleaner" }); return;
+      }
+    }
+    const now = new Date().toISOString();
+    const id = "sop_" + randomBytes(8).toString("hex");
+    const sop = {
+      ...body, id, title, zone_id: zoneId, frequency,
+      recurrence_days: Array.isArray(body.recurrence_days) ? body.recurrence_days : [],
+      scheduled_times: Array.isArray(body.scheduled_times) ? body.scheduled_times : [],
+      default_assignee_id: defaultAssignee,
+      is_active: typeof body.is_active === "boolean" ? body.is_active : true,
+      created_at: now, updated_at: now,
+    };
+    await client.query(
+      "INSERT INTO sop_items (id, title, task_code, zone_id, frequency, recurrence_days, scheduled_time, " +
+      "scheduled_times, default_assignee_id, is_active, raw_data, created_at, updated_at) " +
+      "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9,$10,$11::jsonb,$12::timestamptz,$13::timestamptz)",
+      [id, title, sop.task_code || null, zoneId, frequency, JSON.stringify(sop.recurrence_days),
+        sop.scheduled_time || null, JSON.stringify(sop.scheduled_times), defaultAssignee,
+        sop.is_active, JSON.stringify(sop), now, now],
+    );
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "sop_created", JSON.stringify({ sop_id: id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "sop_created", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ data: sop });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.patch("/api/sop-items/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  for (const key of Object.keys(body)) {
+    if (!sopEditableFields.has(key)) {
+      res.status(400).json({ error: "Field is not allowed: " + key }); return;
+    }
+  }
+  if (Object.keys(body).length === 0) {
+    res.status(400).json({ error: "At least one SOP field must be provided" }); return;
+  }
+  if (body.recurrence_days !== undefined && !Array.isArray(body.recurrence_days)) {
+    res.status(400).json({ error: "recurrence_days must be an array" }); return;
+  }
+  if (body.scheduled_times !== undefined && !Array.isArray(body.scheduled_times)) {
+    res.status(400).json({ error: "scheduled_times must be an array" }); return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query("SELECT id, raw_data FROM sop_items WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "SOP item not found" }); return;
+    }
+    const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
+      ? selected.rows[0].raw_data as Record<string, unknown> : {};
+    const merged = { ...current, ...body, id: req.params.id, updated_at: new Date().toISOString() };
+    if (typeof merged.title !== "string" || !merged.title.trim() ||
+        typeof merged.zone_id !== "string" || typeof merged.frequency !== "string") {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "SOP title, zone_id and frequency are required" }); return;
+    }
+    const zone = await client.query("SELECT id FROM zones WHERE id = $1", [merged.zone_id]);
+    if (zone.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Unknown SOP zone" }); return;
+    }
+    if (typeof merged.default_assignee_id === "string" && merged.default_assignee_id) {
+      const eligible = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'cleaner' AND is_active = TRUE",
+        [merged.default_assignee_id],
+      );
+      if (eligible.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "SOP default assignee must be an active cleaner" }); return;
+      }
+    }
+    await client.query(
+      "UPDATE sop_items SET title = $2, task_code = $3, zone_id = $4, frequency = $5, " +
+      "recurrence_days = $6::jsonb, scheduled_time = $7, scheduled_times = $8::jsonb, " +
+      "default_assignee_id = $9, is_active = $10, raw_data = $11::jsonb, updated_at = $12::timestamptz " +
+      "WHERE id = $1",
+      [req.params.id, merged.title, merged.task_code || null, merged.zone_id, merged.frequency,
+        JSON.stringify(Array.isArray(merged.recurrence_days) ? merged.recurrence_days : []),
+        merged.scheduled_time || null, JSON.stringify(Array.isArray(merged.scheduled_times) ? merged.scheduled_times : []),
+        merged.default_assignee_id || null, merged.is_active !== false, JSON.stringify(merged), merged.updated_at],
+    );
+
+    const today = getBusinessDate();
+    const pending = await client.query(
+      "SELECT id, raw_data, assigned_to, zone_id, due_date, due_time FROM task_instances " +
+      "WHERE (sop_item_id = $1 OR template_id = $1) AND due_date >= $2::date AND status = 'pending' FOR UPDATE",
+      [req.params.id, today],
+    );
+    for (const row of pending.rows) {
+      const task = {
+        ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+        title: merged.title,
+        description: merged.description || "",
+        goal: merged.goal || "",
+        task_code: merged.task_code || "",
+        category: merged.category || "تشغيل",
+        tools_required: merged.tools_required || "",
+        estimated_duration_minutes: merged.estimated_duration_minutes || 0,
+        zone_id: merged.zone_id,
+        guide_image_url: merged.guide_image_url || "",
+        reference_image_url: merged.reference_image_url || "",
+        requires_photo_before: merged.requires_photo_before ?? true,
+        requires_photo_after: merged.requires_photo_after ?? true,
+        requires_supervisor_approval: merged.requires_supervisor_approval ?? true,
+        requires_gps: merged.requires_gps ?? false,
+        requires_signature: false,
+        assigned_to: merged.default_assignee_id || row.assigned_to,
+        due_time: row.due_time || "09:00",
+        updated_at: merged.updated_at,
+      };
+      await client.query(
+        "UPDATE task_instances SET title = $2, description = $3, zone_id = $4, assigned_to = $5, " +
+        "due_time = $6, raw_data = $7::jsonb, updated_at = $8::timestamptz WHERE id = $1",
+        [row.id, task.title, task.description, task.zone_id, task.assigned_to,
+          task.due_time, JSON.stringify(task), task.updated_at],
+      );
+    }
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "sop_updated", JSON.stringify({ sop_id: req.params.id, changed_fields: Object.keys(body), future_tasks_updated: pending.rowCount, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "sop_updated", created_at: merged.updated_at }), merged.updated_at],
+    );
+    await client.query("COMMIT");
+    res.json({ data: merged, meta: { future_pending_tasks_updated: pending.rowCount } });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+app.delete("/api/sop-items/:id", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const deleted = await client.query("DELETE FROM sop_items WHERE id = $1 RETURNING id", [req.params.id]);
+    if (deleted.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "SOP item not found" }); return;
+    }
+    const now = new Date().toISOString();
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "sop_deleted", JSON.stringify({ sop_id: req.params.id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "sop_deleted", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ success: true });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {

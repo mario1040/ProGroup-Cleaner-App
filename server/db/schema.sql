@@ -205,3 +205,21 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS audit_logs_task_created_idx
   ON audit_logs (task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs (created_at DESC);
+
+
+-- Distinct operational template collection; do not alias it to recurring SOP schedules.
+CREATE TABLE IF NOT EXISTS task_templates (
+  id TEXT PRIMARY KEY,
+  zone_id TEXT NOT NULL,
+  task_code TEXT NOT NULL,
+  title TEXT NOT NULL,
+  category TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS task_templates_zone_active_idx
+  ON task_templates (zone_id, is_active);
+CREATE INDEX IF NOT EXISTS task_templates_code_idx
+  ON task_templates (task_code);

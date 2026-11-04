@@ -22,6 +22,14 @@ function passwordRecord(password: string): string {
   return salt + ":" + hash;
 }
 
+function cairoDate(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return String(values.year) + "-" + String(values.month) + "-" + String(values.day);
+}
+
 async function seedUser(id: string, username: string, role: string, password: string): Promise<void> {
   const raw = {
     id, username, full_name: username, role, phone: null,
@@ -75,9 +83,7 @@ describe("PostgreSQL HTTP integration", () => {
     await seedUser(cleanerId, "it_cleaner_" + suffix, "cleaner", "CleanerTest!123");
 
     const now = new Date().toISOString();
-    const dueDate = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+    const dueDate = cairoDate();
     const seedTask = (id: string) => ({
       id, template_id: null, sop_item_id: null, zone_id: zoneId,
       assigned_to: cleanerId, assigned_by: adminId, task_type: "one_time",
@@ -133,9 +139,7 @@ describe("PostgreSQL HTTP integration", () => {
     const deniedUsers = await api("/api/users", "GET", undefined, cleanerCookie);
     expect(deniedUsers.response.status).toBe(403);
 
-    const cleanerTasks = await api("/api/tasks?date=" + new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date()), "GET", undefined, cleanerCookie);
+    const cleanerTasks = await api("/api/tasks?date=" + cairoDate(), "GET", undefined, cleanerCookie);
     expect(cleanerTasks.response.status).toBe(200);
     expect(cleanerTasks.payload.data.some((task: any) => task.id === taskId)).toBe(true);
 

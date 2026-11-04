@@ -1161,7 +1161,7 @@ app.patch("/api/task-templates/:id", requireAuth, allowRoles("admin", "superviso
     const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
       ? selected.rows[0].raw_data as Record<string, unknown> : {};
     const now = new Date().toISOString();
-    const merged = { ...current, ...body, id: req.params.id, updated_at: now };
+    const merged: Record<string, unknown> = { ...current, ...body, id: req.params.id, updated_at: now };
     if (typeof merged.title !== "string" || !merged.title.trim() ||
         typeof merged.task_code !== "string" || !merged.task_code.trim() ||
         typeof merged.zone_id !== "string" || !merged.zone_id) {

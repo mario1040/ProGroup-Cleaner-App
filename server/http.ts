@@ -505,7 +505,7 @@ app.post("/api/users/:id/reassign-pending", requireAuth, allowRoles("admin", "su
     }
     const now = new Date().toISOString();
     for (const row of pending.rows) {
-      const date = String(row.due_date).slice(0, 10);
+      const date = dateOnly(row.due_date);
       const day = workload.get(date) || new Map<string, number>();
       const selected = [...cleanerIds].sort((left, right) =>
         (day.get(left) || 0) - (day.get(right) || 0) || left.localeCompare(right)
@@ -1240,7 +1240,7 @@ app.post("/api/tasks/:id/approve", requireAuth, allowRoles("admin", "supervisor"
     const task = {
       ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
       id: row.id, assigned_to: row.assigned_to, zone_id: row.zone_id,
-      due_date: String(row.due_date).slice(0, 10), due_time: row.due_time, status: row.status,
+      due_date: dateOnly(row.due_date), due_time: row.due_time, status: row.status,
       supervisor_approved: true, supervisor_approved_by: req.auth?.id,
       supervisor_approved_at: now, quality_grade: grade, supervisor_notes: notes, updated_at: now,
     };
@@ -1291,7 +1291,7 @@ app.post("/api/tasks/:id/reject", requireAuth, allowRoles("admin", "supervisor")
     const original = {
       ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
       id: row.id, assigned_to: row.assigned_to, zone_id: row.zone_id,
-      due_date: String(row.due_date).slice(0, 10), due_time: row.due_time,
+      due_date: dateOnly(row.due_date), due_time: row.due_time,
       status: "rejected", supervisor_approved: false,
       supervisor_approved_by: req.auth?.id, supervisor_approved_at: now,
       supervisor_notes: notes || "مرفوضة وتحتاج لإعادة التنظيف", updated_at: now,
@@ -1443,7 +1443,7 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
       assigned_to: row.assigned_to,
       assigned_by: row.assigned_by,
       zone_id: row.zone_id,
-      due_date: String(row.due_date).slice(0, 10),
+      due_date: dateOnly(row.due_date),
       due_time: row.due_time,
       status: row.status,
     } as TaskRecord & Record<string, unknown>;
@@ -1575,7 +1575,7 @@ app.get("/api/tasks", requireAuth, asyncRoute(async (req, res) => {
   res.json({
     data: result.rows.map((row) => ({
       ...row.raw_data, id: row.id, assigned_to: row.assigned_to,
-      due_date: String(row.due_date).slice(0, 10), due_time: row.due_time, status: row.status,
+      due_date: dateOnly(row.due_date), due_time: row.due_time, status: row.status,
     })),
     meta: { limit: rawLimit, offset: rawOffset },
   });

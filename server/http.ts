@@ -271,7 +271,8 @@ app.get("/health/ready", asyncRoute(async (_req, res) => {
       "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
       "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
       "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +
-      "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END, "CASE WHEN to_regclass('public.inventory_items') IS NULL THEN 'inventory_items' END"" +
+      "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END, " +
+      "CASE WHEN to_regclass('public.inventory_items') IS NULL THEN 'inventory_items' END" +
     "], NULL) AS missing",
   );
   const missing = result.rows[0]?.missing || [];

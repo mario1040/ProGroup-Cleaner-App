@@ -195,7 +195,7 @@ Merged PR #7 adds:
 1. Back up the current `naris_ops` database and confirm the Firestore backup directory is present.
 2. Run a dry-run of the targeted `task_templates` import, then apply only that collection. Do not re-import all task collections over live operational data.
 3. Run the Cloudinary media migration in dry-run mode; review the number of Base64 and Firebase Storage URLs. Configure the server-side Cloudinary upload preset before applying.
-4. Apply media migration in a controlled window and rerun it to confirm `remaining_base64_tasks=0` and `remaining_firebase_url_tasks=0` for task photo fields.
+4. Apply media migration in a controlled window and rerun it to confirm `remaining_base64_tasks=0` and `remaining_firebase_url_tasks=0` for task photo fields. Dry-run output separately reports planned Base64 uploads, external URL uploads, and existing Cloudinary metadata indexing.
 5. Run `/api/system/validation` and resolve every error; inspect warnings for unmatched legacy SOP/template references and media.
 6. Complete source-side Firebase Auth, subcollection and Storage inventory, then perform user acceptance and rollback drills before retiring the Firebase project.
 

@@ -278,8 +278,20 @@ app.get("/api/tasks", requireAuth, asyncRoute(async (req, res) => {
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     res.status(400).json({ error: "date must use YYYY-MM-DD" }); return;
   }
-  if (start && !/^\d{4}-\d{2}-\d{2}$/.test(start) || end && !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+  if ((start && !/^\\d{4}-\\d{2}-\\d{2}$/.test(start)) || (end && !/^\\d{4}-\\d{2}-\\d{2}$/.test(end))) {
     res.status(400).json({ error: "Date range must use YYYY-MM-DD" }); return;
+  }
+  if ((start && !end) || (!start && end)) {
+    res.status(400).json({ error: "startDate and endDate must be provided together" }); return;
+  }
+  if (start && end && start > end) {
+    res.status(400).json({ error: "startDate must not be after endDate" }); return;
+  }
+  if (start && end) {
+    const days = (Date.parse(end + "T00:00:00Z") - Date.parse(start + "T00:00:00Z")) / 86_400_000;
+    if (!Number.isFinite(days) || days > 366) {
+      res.status(400).json({ error: "Date range cannot exceed 366 days" }); return;
+    }
   }
   const values: unknown[] = [];
   const clauses: string[] = [];
@@ -313,9 +325,18 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 async function start(): Promise<void> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
   await pool.query("SELECT 1");
-  app.listen(PORT, "0.0.0.0", () => {
-    process.stdout.write("Naris Ops API listening on port " + PORT + "\n");
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    process.stdout.write("Naris Ops API listening on port " + PORT + "\\n");
   });
+  const shutdown = (signal: string) => {
+    process.stdout.write(signal + " received; shutting down API.\\n");
+    server.close(() => {
+      void pool.end().finally(() => process.exit(0));
+    });
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.once("SIGINT", () => shutdown("SIGINT"));
 }
 start().catch((error: unknown) => {
   console.error("API startup failed:", error instanceof Error ? error.message : "unknown error");

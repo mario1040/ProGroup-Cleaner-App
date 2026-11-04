@@ -332,6 +332,42 @@ app.post("/api/users", requireAuth, allowRoles("admin"), asyncRoute(async (req, 
   }
 }));
 
+app.post("/api/users/:id/reset-password", requireAuth, allowRoles("admin"), asyncRoute(async (req, res) => {
+  const generatedPassword = randomBytes(12).toString("base64url");
+  const now = new Date().toISOString();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query("SELECT id, raw_data FROM users WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (selected.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "User not found" }); return;
+    }
+    const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
+      ? selected.rows[0].raw_data as Record<string, unknown> : {};
+    const updated = { ...current, updated_at: now };
+    delete updated.password;
+    await client.query(
+      "UPDATE users SET password_record = $2, raw_data = $3::jsonb, updated_at = $4::timestamptz WHERE id = $1",
+      [req.params.id, hashPassword(generatedPassword), JSON.stringify(updated), now],
+    );
+    await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [req.params.id]);
+    const auditId = "audit_" + randomBytes(12).toString("hex");
+    await client.query(
+      "INSERT INTO audit_logs (id, action, metadata, raw_data, created_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::timestamptz)",
+      [auditId, "user_password_reset", JSON.stringify({ user_id: req.params.id, actor_id: req.auth?.id }),
+        JSON.stringify({ id: auditId, action: "user_password_reset", created_at: now }), now],
+    );
+    await client.query("COMMIT");
+    res.json({ generatedPassword });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.patch("/api/users/:id", requireAuth, allowRoles("admin"), asyncRoute(async (req, res) => {
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
     ? req.body as Record<string, unknown> : {};

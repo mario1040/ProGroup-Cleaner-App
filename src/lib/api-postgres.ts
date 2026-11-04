@@ -169,7 +169,8 @@ export async function getSopItems(): Promise<SOPItem[]> {
 }
 
 export async function getTemplates(): Promise<TaskTemplate[]> {
-  return getSopItems();
+  const result = await apiRequest<ApiEnvelope<TaskTemplate[]>>("/api/task-templates");
+  return result.data;
 }
 
 export async function getOperationalTasks(): Promise<(OperationalTask & { responsible_employee?: Profile })[]> {
@@ -318,8 +319,8 @@ export async function rejectTask(
 
 export async function saveTemplate(template: Partial<TaskTemplate>): Promise<TaskTemplate> {
   const path = template.id
-    ? "/api/sop-items/" + encodeURIComponent(template.id)
-    : "/api/sop-items";
+    ? "/api/task-templates/" + encodeURIComponent(template.id)
+    : "/api/task-templates";
   const { id, ...payload } = template;
   const result = await apiRequest<{ data: TaskTemplate }>(path, {
     method: id ? "PATCH" : "POST",
@@ -329,7 +330,7 @@ export async function saveTemplate(template: Partial<TaskTemplate>): Promise<Tas
 }
 
 export async function deleteTemplate(id: string): Promise<void> {
-  await apiRequest("/api/sop-items/" + encodeURIComponent(id), { method: "DELETE" });
+  await apiRequest("/api/task-templates/" + encodeURIComponent(id), { method: "DELETE" });
 }
 
 export async function saveProfile(profile: Partial<Profile>): Promise<{ profile: Profile; generatedPassword?: string }> {

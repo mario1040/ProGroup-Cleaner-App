@@ -118,3 +118,16 @@ CREATE TABLE IF NOT EXISTS task_generation_runs (
 
 CREATE INDEX IF NOT EXISTS task_generation_runs_date_idx
   ON task_generation_runs (run_date, started_at DESC);
+
+
+-- Server-managed, revocable browser sessions. Only token hashes are stored.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions (user_id);
+CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions (expires_at);

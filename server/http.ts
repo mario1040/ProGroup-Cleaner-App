@@ -345,7 +345,7 @@ app.post("/api/users/:id/reset-password", requireAuth, allowRoles("admin"), asyn
     }
     const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
       ? selected.rows[0].raw_data as Record<string, unknown> : {};
-    const updated = { ...current, updated_at: now };
+    const updated: Record<string, unknown> = { ...current, updated_at: now };
     delete updated.password;
     await client.query(
       "UPDATE users SET password_record = $2, raw_data = $3::jsonb, updated_at = $4::timestamptz WHERE id = $1",

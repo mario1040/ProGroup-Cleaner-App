@@ -10,7 +10,7 @@ export function assertNarisDatabaseUrl(connectionString: string | undefined): st
   let databaseName: string;
   try {
     const parsed = new URL(connectionString);
-    databaseName = decodeURIComponent(parsed.pathname.replace(/^\\/+/, ""));
+    databaseName = decodeURIComponent(parsed.pathname.slice(1));
   } catch {
     throw new Error("DATABASE_URL must be a valid PostgreSQL connection URL.");
   }

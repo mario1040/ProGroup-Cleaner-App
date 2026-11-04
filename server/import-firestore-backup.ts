@@ -109,6 +109,10 @@ function validateNormalizedDocument(
     throw new Error("A location record is missing its name.");
   } else if (collectionName === "zones" && !asString(data.name)) {
     throw new Error("A zone record is missing its name.");
+  } else if (collectionName === "task_templates") {
+    if (!asString(data.title) || !asString(data.zone_id) || !asString(data.task_code)) {
+      throw new Error("A task template is missing its title, zone or task code.");
+    }
   } else if (collectionName === "sop_items") {
     if (!asString(data.title) || !asString(data.zone_id) || !asString(data.frequency)) {
       throw new Error("An SOP record is missing required scheduling fields.");
@@ -207,6 +211,20 @@ async function insertNormalizedDocument(
         id, asString(data.location_id), asString(data.name),
         asString(data.responsible_employee_id), JSON.stringify(safeData),
       ],
+    );
+    return;
+  }
+
+  if (collectionName === "task_templates") {
+    await client.query(
+      "INSERT INTO task_templates (id, zone_id, task_code, title, category, is_active, raw_data, created_at, updated_at) " +
+        "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::timestamptz,$9::timestamptz) " +
+        "ON CONFLICT (id) DO UPDATE SET zone_id = EXCLUDED.zone_id, task_code = EXCLUDED.task_code, " +
+        "title = EXCLUDED.title, category = EXCLUDED.category, is_active = EXCLUDED.is_active, " +
+        "raw_data = EXCLUDED.raw_data, updated_at = EXCLUDED.updated_at",
+      [id, asString(data.zone_id), asString(data.task_code), asString(data.title),
+        asString(data.category), asBoolean(data.is_active, true), JSON.stringify(safeData),
+        asDate(data.created_at), asDate(data.updated_at)],
     );
     return;
   }

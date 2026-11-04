@@ -99,3 +99,37 @@ Do not enable this cron against production until the migrated data has been impo
 - The generator writes only recurring tasks; rework and one-time tasks are outside this generator.
 - Every generation attempt is recorded in `task_generation_runs`.
 - Neither importer nor generator writes to Firebase.
+
+
+## HTTP API foundation (first backend slice)
+
+The branch now includes `server/http.ts` and the `start:api` script.
+
+Implemented endpoints:
+
+- `GET /health/live`: process liveness.
+- `GET /health/ready`: verifies PostgreSQL connectivity.
+- `POST /api/auth/login`: verifies the existing salted SHA-256 password record and creates a server-side session.
+- `POST /api/auth/logout`: revokes the current session.
+- `GET /api/auth/me`: returns the authenticated profile without password fields.
+- `GET /api/users`: admin/supervisor profile listing.
+- `GET /api/zones`: authenticated zone listing.
+- `GET /api/sop-items`: admin/supervisor SOP listing.
+- `GET /api/tasks?date=YYYY-MM-DD`: task listing; cleaners are restricted to their own assigned tasks. Admins and supervisors can see all tasks.
+
+Security foundation:
+
+- Random opaque session tokens; only SHA-256 token hashes are stored in `auth_sessions`.
+- HTTP-only session cookie, 12-hour expiry, and server-side revocation.
+- Login attempt throttling by source IP.
+- CORS origin allowlist via `APP_ALLOWED_ORIGINS`.
+- Password records are never returned by API profile endpoints.
+- Database errors and SQL details are not returned to clients.
+
+Start locally after applying `server/db/schema.sql` and configuring the server-only `.env`:
+
+```bash
+npm run start:api
+```
+
+This is an initial API slice, not yet a complete frontend cutover. The current React application still calls Firebase directly. Task mutations (start/complete/photo upload/approval/rework), full metadata CRUD, KPI/audit endpoints, and the frontend API adapter must be completed and tested before switching production traffic. Do not enable the PostgreSQL scheduler or remove Firebase during this phase.

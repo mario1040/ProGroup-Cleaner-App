@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Pool } from "pg";
 import { assertNarisDatabaseUrl } from "./db/connection";
 import { applyTaskUpdate, type TaskRecord } from "./task-rules";
+import { generateRecurringTasksForDate } from "./task-generator";
 
 type Role = "admin" | "supervisor" | "cleaner";
 interface AuthContext { id: string; username: string; full_name: string; role: Role; is_active: boolean; }
@@ -1587,6 +1588,27 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error("[API]", message);
   res.status(500).json({ error: "Internal server error" });
 });
+
+function businessDate(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: process.env.APP_TIME_ZONE || "Africa/Cairo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return String(values.year) + "-" + String(values.month) + "-" + String(values.day);
+}
+
+async function ensureDailyTasks(date: string): Promise<void> {
+  const completed = await pool.query(
+    "SELECT 1 FROM task_generation_runs WHERE run_date = $1::date AND status = 'completed' LIMIT 1",
+    [date],
+  );
+  if (completed.rowCount) return;
+  const summary = await generateRecurringTasksForDate(pool, date);
+  process.stdout.write("[Task generator] " + JSON.stringify(summary) + "\\n");
+}
 
 async function start(): Promise<void> {
   assertNarisDatabaseUrl(process.env.DATABASE_URL);

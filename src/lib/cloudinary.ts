@@ -1,5 +1,5 @@
 // src/lib/cloudinary.ts
-// Cloudinary upload client — replaces Firebase Storage for image uploads
+// Cloudinary upload client for task and reference media.
 
 const CLOUDINARY_CLOUD_NAME = String(import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || "").trim();
 const CLOUDINARY_UPLOAD_PRESET = String(import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || "").trim();

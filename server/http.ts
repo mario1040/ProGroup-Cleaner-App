@@ -738,6 +738,87 @@ app.get("/api/kpi-snapshots", requireAuth, asyncRoute(async (req, res) => {
   res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
 }));
 
+app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
+  const countQueries = [
+    ["users", "SELECT COUNT(*)::int AS count FROM users"],
+    ["locations", "SELECT COUNT(*)::int AS count FROM locations"],
+    ["zones", "SELECT COUNT(*)::int AS count FROM zones"],
+    ["sop_items", "SELECT COUNT(*)::int AS count FROM sop_items"],
+    ["task_instances", "SELECT COUNT(*)::int AS count FROM task_instances"],
+    ["operational_tasks", "SELECT COUNT(*)::int AS count FROM operational_tasks"],
+    ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches"],
+    ["kpi_snapshots", "SELECT COUNT(*)::int AS count FROM kpi_snapshots"],
+    ["audit_logs", "SELECT COUNT(*)::int AS count FROM audit_logs"],
+  ] as const;
+  const details: Array<{
+    collectionName: string; totalDocs: number; passedDocs: number;
+    failedDocs: number; errors: string[]; warnings: string[];
+  }> = [];
+  let totalDocuments = 0;
+  let totalErrors = 0;
+  let totalWarnings = 0;
+  for (const [collectionName, sql] of countQueries) {
+    const result = await pool.query<{ count: number }>(sql);
+    const count = Number(result.rows[0]?.count || 0);
+    totalDocuments += count;
+    details.push({
+      collectionName, totalDocs: count, passedDocs: count,
+      failedDocs: 0, errors: [], warnings: [],
+    });
+  }
+  const checks = [
+    ["zones", "SELECT COUNT(*)::int AS count FROM zones z LEFT JOIN locations l ON l.id = z.location_id WHERE z.location_id IS NOT NULL AND l.id IS NULL", "Zone records reference missing locations."],
+    ["zones", "SELECT COUNT(*)::int AS count FROM zones z LEFT JOIN users u ON u.id = z.responsible_employee_id WHERE z.responsible_employee_id IS NOT NULL AND u.id IS NULL", "Zone records reference missing responsible employees."],
+    ["sop_items", "SELECT COUNT(*)::int AS count FROM sop_items s LEFT JOIN zones z ON z.id = s.zone_id WHERE z.id IS NULL", "SOP records reference missing zones."],
+    ["task_instances", "SELECT COUNT(*)::int AS count FROM task_instances t LEFT JOIN users u ON u.id = t.assigned_to WHERE u.id IS NULL", "Tasks reference missing assignees."],
+    ["task_instances", "SELECT COUNT(*)::int AS count FROM task_instances t LEFT JOIN zones z ON z.id = t.zone_id WHERE z.id IS NULL", "Tasks reference missing zones."],
+    ["operational_tasks", "SELECT COUNT(*)::int AS count FROM operational_tasks t LEFT JOIN zones z ON z.id = t.zone_id WHERE t.zone_id IS NOT NULL AND z.id IS NULL", "Operational tasks reference missing zones."],
+    ["device_switches", "SELECT COUNT(*)::int AS count FROM device_switches d LEFT JOIN zones z ON z.id = d.zone_id WHERE d.zone_id IS NOT NULL AND z.id IS NULL", "Device switches reference missing zones."],
+    ["kpi_snapshots", "SELECT COUNT(*)::int AS count FROM kpi_snapshots k LEFT JOIN users u ON u.id = k.profile_id WHERE k.profile_id IS NOT NULL AND u.id IS NULL", "KPI snapshots reference missing users."],
+  ] as const;
+  for (const [collectionName, sql, message] of checks) {
+    const result = await pool.query<{ count: number }>(sql);
+    const count = Number(result.rows[0]?.count || 0);
+    const detail = details.find((item) => item.collectionName === collectionName);
+    if (count > 0 && detail) {
+      detail.errors.push(message + " Count: " + count);
+      detail.failedDocs += count;
+      detail.passedDocs = Math.max(0, detail.totalDocs - detail.failedDocs);
+      totalErrors += 1;
+    }
+  }
+  const legacy = await pool.query<{ sop_orphans: number; template_orphans: number; base64_photos: number }>(
+    "SELECT " +
+    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.sop_item_id WHERE t.sop_item_id IS NOT NULL AND s.id IS NULL) AS sop_orphans, " +
+    "(SELECT COUNT(*)::int FROM task_instances t LEFT JOIN sop_items s ON s.id = t.template_id WHERE t.template_id IS NOT NULL AND s.id IS NULL) AS template_orphans, " +
+    "(SELECT COUNT(*)::int FROM task_instances t WHERE COALESCE(t.raw_data->>'photo_before_url','') LIKE 'data:image/%' OR COALESCE(t.raw_data->>'photo_after_url','') LIKE 'data:image/%') AS base64_photos",
+  );
+  const legacyRow = legacy.rows[0];
+  const taskDetail = details.find((item) => item.collectionName === "task_instances");
+  if (taskDetail) {
+    const orphanCount = Number(legacyRow?.sop_orphans || 0) + Number(legacyRow?.template_orphans || 0);
+    if (orphanCount > 0) {
+      taskDetail.warnings.push("Historical SOP/template references without current master matches: " + orphanCount + ". Preserve legacy IDs; do not auto-map.");
+      totalWarnings += 1;
+    }
+    if (Number(legacyRow?.base64_photos || 0) > 0) {
+      taskDetail.warnings.push("Base64 photo fields still require server-side Cloudinary migration: " + Number(legacyRow.base64_photos));
+      totalWarnings += 1;
+    }
+  }
+  res.json({
+    timestamp: new Date().toISOString(),
+    isPassed: totalErrors === 0,
+    summary: {
+      totalCollectionsChecked: details.length,
+      totalDocumentsChecked: totalDocuments,
+      totalErrors,
+      totalWarnings,
+    },
+    details,
+  });
+}));
+
 app.get("/api/audit-logs", requireAuth, asyncRoute(async (req, res) => {
   const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
   const rawOffset = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;

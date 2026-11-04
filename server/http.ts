@@ -303,7 +303,7 @@ app.post("/api/users", requireAuth, allowRoles("admin"), asyncRoute(async (req, 
   const generatedPassword = suppliedPassword || randomBytes(12).toString("base64url");
   const id = "p_" + randomBytes(8).toString("hex");
   const now = new Date().toISOString();
-  const raw = { ...body, id, username, full_name: fullName, role, is_active: body.is_active !== false, created_at: now };
+  const raw: Record<string, unknown> = { ...body, id, username, full_name: fullName, role, is_active: body.is_active !== false, created_at: now };
   delete raw.password;
   const client = await pool.connect();
   try {
@@ -489,7 +489,7 @@ app.patch("/api/zones/:id", requireAuth, allowRoles("admin", "supervisor"), asyn
     }
     const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
       ? selected.rows[0].raw_data as Record<string, unknown> : {};
-    const zone = { ...current, ...body, id: req.params.id };
+    const zone: Record<string, unknown> = { ...current, ...body, id: req.params.id };
     if (typeof zone.name !== "string" || !zone.name.trim() || typeof zone.location_id !== "string") {
       await client.query("ROLLBACK");
       res.status(400).json({ error: "Zone name and location_id are required" }); return;
@@ -696,7 +696,7 @@ app.post("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), async
     }
     const now = new Date().toISOString();
     const id = "sop_" + randomBytes(8).toString("hex");
-    const sop = {
+    const sop: Record<string, unknown> = {
       ...body, id, title, zone_id: zoneId, frequency,
       recurrence_days: Array.isArray(body.recurrence_days) ? body.recurrence_days : [],
       scheduled_times: Array.isArray(body.scheduled_times) ? body.scheduled_times : [],
@@ -755,7 +755,7 @@ app.patch("/api/sop-items/:id", requireAuth, allowRoles("admin", "supervisor"), 
     }
     const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
       ? selected.rows[0].raw_data as Record<string, unknown> : {};
-    const merged = { ...current, ...body, id: req.params.id, updated_at: new Date().toISOString() };
+    const merged: Record<string, unknown> = { ...current, ...body, id: req.params.id, updated_at: new Date().toISOString() };
     if (typeof merged.title !== "string" || !merged.title.trim() ||
         typeof merged.zone_id !== "string" || typeof merged.frequency !== "string") {
       await client.query("ROLLBACK");

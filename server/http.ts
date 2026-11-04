@@ -1513,6 +1513,27 @@ app.post("/api/tasks", requireAuth, allowRoles("admin", "supervisor"), asyncRout
       await client.query("ROLLBACK");
       res.status(400).json({ error: "Unknown task zone" }); return;
     }
+    if (typeof body.template_id === "string" && body.template_id) {
+      const template = await client.query(
+        "SELECT id, zone_id FROM task_templates WHERE id = $1",
+        [body.template_id],
+      );
+      if (template.rowCount !== 1 || String(template.rows[0].zone_id) !== zoneId) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "Task template does not exist or belongs to another zone" }); return;
+      }
+    }
+    if (typeof body.sop_item_id === "string" && body.sop_item_id) {
+      const sop = await client.query(
+        "SELECT id, zone_id FROM sop_items WHERE id = $1",
+        [body.sop_item_id],
+      );
+      if (sop.rowCount !== 1 || String(sop.rows[0].zone_id) !== zoneId) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ error: "SOP item does not exist or belongs to another zone" }); return;
+      }
+    }
+
     if (taskType === "rework") {
       const parent = await client.query("SELECT id FROM task_instances WHERE id = $1", [body.parent_instance_id]);
       if (parent.rowCount !== 1) {

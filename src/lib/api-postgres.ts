@@ -221,12 +221,28 @@ export async function getDeviceSwitches(): Promise<DeviceSwitch[]> {
 async function enrichTasks(tasks: TaskInstance[]): Promise<(TaskInstance & {
   zone?: Zone; assignee?: Profile; template?: TaskTemplate;
 })[]> {
-  const [zones, profiles, templates, sops, currentUser] = await Promise.all([
-    getRawZones().catch(() => [] as Zone[]),
+  // Cleaner accounts are intentionally denied access to admin-only user, SOP and
+  // template catalogs. Do not call those endpoints while enriching cleaner tasks.
+  const currentUser = await getCurrentUserProfile();
+  const zones = await getRawZones().catch(() => [] as Zone[]);
+
+  if (currentUser?.role === "cleaner") {
+    return tasks.map((task) => {
+      const taskWithEmbeddedTemplate = task as TaskInstance & { template?: TaskTemplate };
+      return {
+        ...normalizeTaskPhotoUrls(task),
+        zone: zones.find((zone) => zone.id === task.zone_id),
+        assignee: task.assigned_to === currentUser.id ? currentUser : undefined,
+        // Use an embedded task snapshot when present; never fetch admin-only catalogs.
+        template: taskWithEmbeddedTemplate.template,
+      };
+    });
+  }
+
+  const [profiles, templates, sops] = await Promise.all([
     getProfiles().catch(() => [] as Profile[]),
     getTemplates().catch(() => [] as TaskTemplate[]),
     getSopItems().catch(() => [] as SOPItem[]),
-    getCurrentUserProfile(),
   ]);
   const usableProfiles = profiles.length ? profiles : (currentUser ? [currentUser] : []);
   return tasks.map((task) => ({

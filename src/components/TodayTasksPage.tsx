@@ -641,8 +641,8 @@ export default function TodayTasksPage({
 
       {/* Task Modal / Detail Drawer Sheet */}
       {selectedTask && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-end justify-center">
-          <div className="bg-white w-full max-w-md rounded-t-3xl shadow-xl max-h-[92vh] overflow-y-auto pb-8 flex flex-col transform translate-y-0 transition-transform duration-300">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-6">
+          <div className="flex max-h-[min(92dvh,900px)] w-full max-w-xl flex-col overflow-y-auto rounded-t-[2rem] bg-white pb-[max(env(safe-area-inset-bottom),1.5rem)] shadow-2xl transition-transform duration-300 sm:rounded-[2rem]">
             
             {/* Drawer Header */}
             <div className="border-b border-slate-100 p-4 sticky top-0 bg-white z-10 flex justify-between items-center">

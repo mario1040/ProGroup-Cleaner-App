@@ -25,7 +25,8 @@ async function main(): Promise<void> {
 
   try {
     const [database, users, adminAccounts, cleaners, sopFrequencies, sopWarnings,
-      todayTasks, todayRuns, integrity, sourceCollections, media] = await Promise.all([
+      todayTasks, todayRuns, integrity, sourceCollections, archiveCoverage, monthlyArchive,
+      sourceParity, snapshotCoverage, snapshotsByPeriod, mediaIntegrity, media] = await Promise.all([
       pool.query(
         "SELECT current_database() AS database, current_user AS runtime_role, " +
         "current_setting('server_version') AS postgres_version",
@@ -93,6 +94,53 @@ async function main(): Promise<void> {
         "FROM firestore_documents GROUP BY collection_name ORDER BY collection_name",
       ),
       pool.query(
+        "SELECT COUNT(*)::int AS total_tasks, MIN(due_date)::text AS first_due_date, " +
+        "MAX(due_date)::text AS last_due_date, " +
+        "COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_tasks, " +
+        "COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected_tasks, " +
+        "COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_tasks, " +
+        "COUNT(*) FILTER (WHERE status = 'in_progress')::int AS in_progress_tasks " +
+        "FROM task_instances",
+      ),
+      pool.query(
+        "SELECT to_char(date_trunc('month', due_date), 'YYYY-MM') AS month, " +
+        "COUNT(*)::int AS total, " +
+        "COUNT(*) FILTER (WHERE status = 'completed')::int AS completed, " +
+        "COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected, " +
+        "COUNT(*) FILTER (WHERE status = 'pending')::int AS pending, " +
+        "COUNT(*) FILTER (WHERE status = 'in_progress')::int AS in_progress, " +
+        "COUNT(*) FILTER (WHERE status = 'completed' AND COALESCE((raw_data->>'supervisor_approved')::boolean, FALSE))::int AS supervisor_approved " +
+        "FROM task_instances GROUP BY date_trunc('month', due_date) ORDER BY date_trunc('month', due_date)",
+      ),
+      pool.query(
+        "SELECT COUNT(*)::int AS normalized_tasks, " +
+        "(SELECT COUNT(*)::int FROM firestore_documents WHERE collection_name = 'task_instances') AS source_documents, " +
+        "(SELECT COUNT(*)::int FROM task_instances t WHERE NOT EXISTS (" +
+        " SELECT 1 FROM firestore_documents d WHERE d.collection_name = 'task_instances' AND d.document_id = t.id)) AS normalized_without_source, " +
+        "(SELECT COUNT(*)::int FROM firestore_documents d WHERE d.collection_name = 'task_instances' AND NOT EXISTS (" +
+        " SELECT 1 FROM task_instances t WHERE t.id = d.document_id)) AS source_without_normalized, " +
+        "(SELECT COUNT(*)::int FROM (SELECT document_id FROM firestore_documents " +
+        " WHERE collection_name = 'task_instances' GROUP BY document_id HAVING COUNT(*) > 1) duplicates) AS duplicate_source_ids " +
+        "FROM task_instances",
+      ),
+      pool.query(
+        "SELECT COUNT(*)::int AS total_snapshots, MIN(period_start)::text AS first_period_start, " +
+        "MAX(period_end)::text AS last_period_end, " +
+        "COUNT(*) FILTER (WHERE profile_id IS NULL OR NOT EXISTS " +
+        "(SELECT 1 FROM users u WHERE u.id = k.profile_id))::int AS snapshots_without_profile " +
+        "FROM kpi_snapshots k",
+      ),
+      pool.query(
+        "SELECT period_type, COUNT(*)::int AS total, MIN(period_start)::text AS first_period_start, " +
+        "MAX(period_end)::text AS last_period_end " +
+        "FROM kpi_snapshots GROUP BY period_type ORDER BY period_type",
+      ),
+      pool.query(
+        "SELECT COUNT(*)::int AS total_media, " +
+        "COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM task_instances t WHERE t.id = m.task_id))::int AS media_without_task " +
+        "FROM task_media m",
+      ),
+      pool.query(
         "SELECT storage_provider, side, COUNT(*)::int AS total " +
         "FROM task_media GROUP BY storage_provider, side ORDER BY storage_provider, side",
       ),
@@ -112,6 +160,12 @@ async function main(): Promise<void> {
       todayGenerationRuns: todayRuns.rows,
       historicalReferenceIntegrity: integrity.rows[0],
       importedFirestoreCollections: sourceCollections.rows,
+      archiveCoverage: archiveCoverage.rows[0],
+      monthlyArchive: monthlyArchive.rows,
+      taskSourceParity: sourceParity.rows[0],
+      historicalKpiSnapshotCoverage: snapshotCoverage.rows[0],
+      kpiSnapshotsByPeriod: snapshotsByPeriod.rows,
+      taskMediaIntegrity: mediaIntegrity.rows[0],
       taskMedia: media.rows,
     }, null, 2) + "\n");
   } finally {

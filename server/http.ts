@@ -3,7 +3,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { assertNarisDatabaseUrl } from "./db/connection";
-import { applyTaskUpdate, type TaskRecord } from "./task-rules";
+import { applyTaskUpdate, getTaskPhotoUrls, type TaskRecord } from "./task-rules";
 import { generateRecurringTasksForDate } from "./task-generator";
 
 type Role = "admin" | "supervisor" | "cleaner";
@@ -1904,13 +1904,30 @@ app.post("/api/tasks/:id/approve", requireAuth, allowRoles("admin", "supervisor"
       res.status(404).json({ error: "Task not found" }); return;
     }
     const row = selected.rows[0];
+    const rawTask = row.raw_data && typeof row.raw_data === "object" && !Array.isArray(row.raw_data)
+      ? row.raw_data as Record<string, unknown>
+      : {};
     if (row.status !== "completed") {
       await client.query("ROLLBACK");
       res.status(409).json({ error: "Only completed tasks can be approved" }); return;
     }
+    if (rawTask.supervisor_approved === true) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Task has already been approved" }); return;
+    }
+    if (rawTask.requires_supervisor_approval === false) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "This task does not require supervisor approval" }); return;
+    }
+    const photoUrls = getTaskPhotoUrls({ ...rawTask, id: String(row.id), status: String(row.status) } as TaskRecord);
+    if ((rawTask.requires_photo_before !== false && !photoUrls.before) ||
+        (rawTask.requires_photo_after !== false && !photoUrls.after)) {
+      await client.query("ROLLBACK");
+      res.status(422).json({ error: "Required before/after photo evidence is missing" }); return;
+    }
     const now = new Date().toISOString();
     const task = {
-      ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+      ...rawTask,
       id: row.id, assigned_to: row.assigned_to, zone_id: row.zone_id,
       due_date: dateOnly(row.due_date), due_time: row.due_time, status: row.status,
       supervisor_approved: true, supervisor_approved_by: req.auth?.id,
@@ -1944,7 +1961,7 @@ app.post("/api/tasks/:id/reject", requireAuth, allowRoles("admin", "supervisor")
   try {
     await client.query("BEGIN");
     const selected = await client.query(
-      "SELECT id, raw_data, assigned_to, zone_id, due_date, due_time, status, template_id " +
+      "SELECT id, raw_data, assigned_to, zone_id, due_date, due_time, status, template_id, sop_item_id " +
       "FROM task_instances WHERE id = $1 FOR UPDATE",
       [req.params.id],
     );
@@ -1953,9 +1970,26 @@ app.post("/api/tasks/:id/reject", requireAuth, allowRoles("admin", "supervisor")
       res.status(404).json({ error: "Task not found" }); return;
     }
     const row = selected.rows[0];
-    if (row.status === "rejected") {
+    const rawTask = row.raw_data && typeof row.raw_data === "object" && !Array.isArray(row.raw_data)
+      ? row.raw_data as Record<string, unknown>
+      : {};
+    if (row.status !== "completed") {
       await client.query("ROLLBACK");
-      res.status(409).json({ error: "Task has already been rejected" }); return;
+      res.status(409).json({ error: "Only completed tasks can be rejected for rework" }); return;
+    }
+    if (rawTask.supervisor_approved === true) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "An approved task cannot be rejected" }); return;
+    }
+    if (rawTask.requires_supervisor_approval === false) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "This task does not require supervisor review" }); return;
+    }
+    const photoUrls = getTaskPhotoUrls({ ...rawTask, id: String(row.id), status: String(row.status) } as TaskRecord);
+    if ((rawTask.requires_photo_before !== false && !photoUrls.before) ||
+        (rawTask.requires_photo_after !== false && !photoUrls.after)) {
+      await client.query("ROLLBACK");
+      res.status(422).json({ error: "Required before/after photo evidence is missing" }); return;
     }
 
     const now = new Date().toISOString();
@@ -2003,6 +2037,7 @@ app.post("/api/tasks/:id/reject", requireAuth, allowRoles("admin", "supervisor")
     const rework = {
       id: reworkId,
       template_id: row.template_id,
+      sop_item_id: row.sop_item_id,
       zone_id: row.zone_id,
       assigned_to: reworkAssignee,
       assigned_by: req.auth?.id || "p1",
@@ -2023,10 +2058,10 @@ app.post("/api/tasks/:id/reject", requireAuth, allowRoles("admin", "supervisor")
       [req.params.id, JSON.stringify(original), now],
     );
     await client.query(
-      "INSERT INTO task_instances (id, template_id, zone_id, assigned_to, assigned_by, task_type, " +
+      "INSERT INTO task_instances (id, template_id, sop_item_id, zone_id, assigned_to, assigned_by, task_type, " +
       "parent_instance_id, title, description, due_date, due_time, status, raw_data, created_at, updated_at) " +
-      "VALUES ($1,$2,$3,$4,$5,'rework',$6,$7,$8,$9::date,$10,$11,$12::jsonb,$13::timestamptz,$14::timestamptz)",
-      [reworkId, row.template_id, row.zone_id, reworkAssignee, rework.assigned_by, row.id,
+      "VALUES ($1,$2,$3,$4,$5,$6,'rework',$7,$8,$9,$10::date,$11,$12,$13::jsonb,$14::timestamptz,$15::timestamptz)",
+      [reworkId, row.template_id, row.sop_item_id, row.zone_id, reworkAssignee, rework.assigned_by, row.id,
         rework.title, rework.description, today, "17:00", "pending", JSON.stringify(rework), now, now],
     );
     const auditId = "audit_" + randomBytes(12).toString("hex");
@@ -2139,6 +2174,10 @@ app.patch("/api/tasks/:id", requireAuth, asyncRoute(async (req, res) => {
     if (req.auth?.role === "cleaner" && row.assigned_to !== req.auth.id) {
       await client.query("ROLLBACK");
       res.status(403).json({ error: "You can only update tasks assigned to you" }); return;
+    }
+    if (req.auth?.role === "cleaner" && ["completed", "rejected"].includes(String(row.status))) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Submitted tasks are locked while awaiting supervisor review" }); return;
     }
     const current = {
       ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),

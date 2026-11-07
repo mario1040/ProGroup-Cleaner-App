@@ -124,7 +124,7 @@ export async function generateRecurringTasksForDate(
         "FROM sop_items WHERE is_active = TRUE ORDER BY id",
     );
     const profileRows = await client.query<Record<string, unknown>>(
-      "SELECT id, role, is_active FROM users " +
+      "SELECT id, role, is_active, full_name, username FROM users " +
         "WHERE role = 'cleaner' AND is_active = TRUE ORDER BY id",
     );
     const zoneRows = await client.query<Record<string, unknown>>(

@@ -92,6 +92,7 @@ export interface TaskGenerationSummary {
   skippedNoEligibleCleaner: number;
   runId: string;
   dryRun: boolean;
+  assignmentBreakdown: Array<{ cleanerId: string; cleanerName: string; count: number }>;
 }
 
 export async function generateRecurringTasksForDate(
@@ -143,6 +144,21 @@ export async function generateRecurringTasksForDate(
       existingTasks: taskRows.rows.map(mapTask),
       now,
     });
+    const cleanerNames = new Map(profileRows.rows.map((row) => [
+      String(row.id),
+      String(row.full_name || row.username || row.id),
+    ]));
+    const assignmentCounts = new Map<string, number>();
+    for (const task of plan.generated) {
+      assignmentCounts.set(task.assigned_to, (assignmentCounts.get(task.assigned_to) || 0) + 1);
+    }
+    const assignmentBreakdown = [...assignmentCounts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([cleanerId, count]) => ({
+        cleanerId,
+        cleanerName: cleanerNames.get(cleanerId) || cleanerId,
+        count,
+      }));
 
     if (dryRun) {
       await client.query("ROLLBACK");
@@ -153,6 +169,7 @@ export async function generateRecurringTasksForDate(
         skippedNoEligibleCleaner: plan.skippedNoEligibleCleaner,
         runId,
         dryRun: true,
+        assignmentBreakdown,
       };
     }
 
@@ -206,6 +223,7 @@ export async function generateRecurringTasksForDate(
       skippedNoEligibleCleaner: plan.skippedNoEligibleCleaner,
       runId,
       dryRun: false,
+      assignmentBreakdown,
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);

@@ -468,7 +468,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
         supervisor_approved: false
       });
 
-      showToast("تم إسناد المهمة وإرسال إشعار فوري للموظف! 🚀", "success");
+      showToast("تم إسناد المهمة. ستظهر في قائمة مهام الموظف عند تحديثها خلال ثوانٍ.", "success");
       setIsAssignModalOpen(false);
       // Reset form
       setNewTaskData({

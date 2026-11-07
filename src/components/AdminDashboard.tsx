@@ -866,15 +866,22 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
     try {
       setLoadingHistorical(true);
       setHasSearched(true);
+      // Clear the previous result immediately so a failed/new query can never
+      // leave an older period displayed under the newly selected date filters.
+      setHistoricalTasks([]);
       const allRangeTasks = await getTasksForRange(reportStartDate, reportEndDate);
       const filtered = reportEmployeeId === "all"
         ? allRangeTasks
         : allRangeTasks.filter(t => t.assigned_to === reportEmployeeId);
       setHistoricalTasks(filtered.map(normalizeTaskPhotoUrls));
       showToast(`تم استرجاع عدد ${filtered.length} مهمة بنجاح`, "success");
-    } catch (err: any) {
-      console.error(err);
-      showToast("خطأ أثناء استرجاع بيانات الأرشيف", "error");
+    } catch (err: unknown) {
+      console.error("[Monthly reports] Archive retrieval failed:", err);
+      setHistoricalTasks([]);
+      showToast(
+        err instanceof Error ? err.message : "حدث خطأ أثناء استرجاع بيانات الأرشيف",
+        "error",
+      );
     } finally {
       setLoadingHistorical(false);
     }

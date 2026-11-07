@@ -138,6 +138,13 @@ async function main(): Promise<void> {
         "WHERE COALESCE(s.total,0) <> COALESCE(n.total,0) ORDER BY month",
       ),
       pool.query(
+        "SELECT COUNT(*)::int AS total_snapshots, MIN(period_start)::text AS first_period_start, " +
+        "MAX(period_end)::text AS last_period_end, " +
+        "COUNT(*) FILTER (WHERE profile_id IS NULL OR NOT EXISTS " +
+        "(SELECT 1 FROM users u WHERE u.id = k.profile_id))::int AS snapshots_without_profile " +
+        "FROM kpi_snapshots k",
+      ),
+      pool.query(
         "SELECT period_type, COUNT(*)::int AS total, MIN(period_start)::text AS first_period_start, " +
         "MAX(period_end)::text AS last_period_end " +
         "FROM kpi_snapshots GROUP BY period_type ORDER BY period_type",

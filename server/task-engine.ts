@@ -154,7 +154,7 @@ export function getSopOccurrencesForDate(
     case "يوم ويوم":
     case "يوم و يوم": {
       const createdDate = sop.created_at?.slice(0, 10);
-      if (!createdDate || !/^\\d{4}-\\d{2}-\\d{2}$/.test(createdDate)) return [];
+      if (!createdDate || !/^\d{4}-\d{2}-\d{2}$/.test(createdDate)) return [];
       return getDaysDiff(createdDate, date) % 2 === 0
         ? times.map((time, occurrenceIndex) => ({ time, occurrenceIndex }))
         : [];

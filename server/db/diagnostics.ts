@@ -125,10 +125,10 @@ async function main(): Promise<void> {
       ),
       pool.query(
         "WITH source_monthly AS (" +
-        " SELECT to_char((data->>'due_date')::date, 'YYYY-MM') AS month, COUNT(*)::int AS total " +
+        " SELECT to_char(substring(data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM') AS month, COUNT(*)::int AS total " +
         " FROM firestore_documents WHERE collection_name = 'task_instances' " +
         " AND data->>'due_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' " +
-        " GROUP BY to_char((data->>'due_date')::date, 'YYYY-MM')" +
+        " GROUP BY to_char(substring(data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM')" +
         "), normalized_monthly AS (" +
         " SELECT to_char(date_trunc('month', due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
         " FROM task_instances GROUP BY date_trunc('month', due_date)" +
@@ -189,7 +189,7 @@ main().catch((error: unknown) => {
   process.exitCode = 1;
 });
  " +
-        " GROUP BY to_char((data->>'due_date')::date, 'YYYY-MM')" +
+        " GROUP BY to_char(substring(data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM')" +
         "), normalized_monthly AS (" +
         " SELECT to_char(date_trunc('month', due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
         " FROM task_instances GROUP BY date_trunc('month', due_date)" +

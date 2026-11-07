@@ -6,6 +6,15 @@ SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') \gexec
 SELECT format('ALTER ROLE %I PASSWORD %L', :'app_user', :'app_password') \gexec
 
+SELECT format('ALTER ROLE %I NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'app_user') \gexec
+
+-- A runtime login must not inherit privileged role memberships.
+SELECT format('REVOKE %I FROM %I', parent.rolname, member.rolname)
+FROM pg_auth_members m
+JOIN pg_roles parent ON parent.oid = m.roleid
+JOIN pg_roles member ON member.oid = m.member
+WHERE member.rolname = :'app_user' \gexec
+
 -- Transfer any legacy-owned objects to the migration owner before revoking grants.
 -- This is metadata-only and preserves every row, index, sequence, and constraint.
 REASSIGN OWNED BY :"app_user" TO :"admin_user";

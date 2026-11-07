@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   try {
     const [database, users, adminAccounts, cleaners, sopFrequencies, sopWarnings,
       todayTasks, todayRuns, integrity, sourceCollections, archiveCoverage, monthlyArchive,
-      sourceParity, snapshotCoverage, snapshotsByPeriod, mediaIntegrity, media] = await Promise.all([
+      sourceParity, monthlySourceParity, snapshotCoverage, snapshotsByPeriod, mediaIntegrity, media] = await Promise.all([
       pool.query(
         "SELECT current_database() AS database, current_user AS runtime_role, " +
         "current_setting('server_version') AS postgres_version",
@@ -122,6 +122,77 @@ async function main(): Promise<void> {
         "(SELECT COUNT(*)::int FROM (SELECT document_id FROM firestore_documents " +
         " WHERE collection_name = 'task_instances' GROUP BY document_id HAVING COUNT(*) > 1) duplicates) AS duplicate_source_ids " +
         "FROM task_instances",
+      ),
+      pool.query(
+        "WITH source_monthly AS (" +
+        " SELECT to_char((data->>'due_date')::date, 'YYYY-MM') AS month, COUNT(*)::int AS total " +
+        " FROM firestore_documents WHERE collection_name = 'task_instances' " +
+        " AND data->>'due_date' ~ '^\\\\d{4}-\\\\d{2}-\\\\d{2}
+        "MAX(period_end)::text AS last_period_end, " +
+        "COUNT(*) FILTER (WHERE profile_id IS NULL OR NOT EXISTS " +
+        "(SELECT 1 FROM users u WHERE u.id = k.profile_id))::int AS snapshots_without_profile " +
+        "FROM kpi_snapshots k",
+      ),
+      pool.query(
+        "SELECT period_type, COUNT(*)::int AS total, MIN(period_start)::text AS first_period_start, " +
+        "MAX(period_end)::text AS last_period_end " +
+        "FROM kpi_snapshots GROUP BY period_type ORDER BY period_type",
+      ),
+      pool.query(
+        "SELECT COUNT(*)::int AS total_media, " +
+        "COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM task_instances t WHERE t.id = m.task_id))::int AS media_without_task " +
+        "FROM task_media m",
+      ),
+      pool.query(
+        "SELECT storage_provider, side, COUNT(*)::int AS total " +
+        "FROM task_media GROUP BY storage_provider, side ORDER BY storage_provider, side",
+      ),
+    ]);
+
+    process.stdout.write(JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      businessDate,
+      timeZone,
+      database: database.rows[0],
+      users: users.rows[0],
+      adminAccounts: adminAccounts.rows,
+      cleaners: cleaners.rows[0],
+      activeSopFrequency: sopFrequencies.rows,
+      activeSopWarnings: sopWarnings.rows[0],
+      todayTasks: todayTasks.rows,
+      todayGenerationRuns: todayRuns.rows,
+      historicalReferenceIntegrity: integrity.rows[0],
+      importedFirestoreCollections: sourceCollections.rows,
+      archiveCoverage: archiveCoverage.rows[0],
+      monthlyArchive: monthlyArchive.rows,
+      taskSourceParity: sourceParity.rows[0],
+      monthlyTaskSourceParityMismatches: monthlySourceParity.rows,
+      historicalKpiSnapshotCoverage: snapshotCoverage.rows[0],
+      kpiSnapshotsByPeriod: snapshotsByPeriod.rows,
+      taskMediaIntegrity: mediaIntegrity.rows[0],
+      taskMedia: media.rows,
+    }, null, 2) + "\n");
+  } finally {
+    await pool.end();
+  }
+}
+
+main().catch((error: unknown) => {
+  process.stderr.write(
+    "Naris diagnostics failed: " +
+    (error instanceof Error ? error.message : "Unknown error") + "\n",
+  );
+  process.exitCode = 1;
+});
+ " +
+        " GROUP BY to_char((data->>'due_date')::date, 'YYYY-MM')" +
+        "), normalized_monthly AS (" +
+        " SELECT to_char(date_trunc('month', due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
+        " FROM task_instances GROUP BY date_trunc('month', due_date)" +
+        ") SELECT COALESCE(s.month, n.month) AS month, COALESCE(s.total,0)::int AS source_total, " +
+        "COALESCE(n.total,0)::int AS normalized_total " +
+        "FROM source_monthly s FULL OUTER JOIN normalized_monthly n ON n.month = s.month " +
+        "WHERE COALESCE(s.total,0) <> COALESCE(n.total,0) ORDER BY month",
       ),
       pool.query(
         "SELECT COUNT(*)::int AS total_snapshots, MIN(period_start)::text AS first_period_start, " +

@@ -23,6 +23,7 @@ import { isOnline } from "../lib/offlineManager";
 import { isUsableImageUrl } from "../lib/cloudinary";
 import PhotoCapture from "./PhotoCapture";
 import ProfessorLogo from "./ProfessorLogo";
+import { getTaskStatusLabel } from "../lib/task-status";
 
 const TaskTimer = ({ task }: { task: TaskInstance & { zone?: Zone; template?: TaskTemplate } }) => {
   const [elapsed, setElapsed] = useState<number>(0);
@@ -194,18 +195,8 @@ export default function TodayTasksPage({
     }
   };
 
-  const getStatusLabel = (status: string, taskType?: string) => {
-    if (taskType === "rework" && status === "pending") return "إعادة تنظيف ⚠️";
-    switch (status) {
-      case "pending": return "معلقة";
-      case "in_progress": return "قيد التنفيذ ⚡";
-      case "completed": return "مكتملة";
-      case "rejected": return "مرفوضة / بحاجة لإعادة ⚠️";
-      case "late": return "متأخرة ⏰";
-      case "escalated": return "مصعّدة";
-      default: return status;
-    }
-  };
+  const getStatusLabel = (status: string, taskType?: string) =>
+    getTaskStatusLabel(status, { taskType });
 
   // Start executing task
   const handleStartTask = async () => {
@@ -525,7 +516,7 @@ export default function TodayTasksPage({
         <div className="flex gap-1.5 overflow-x-auto pb-3 scrollbar-none px-1">
           {[
             { id: "all", label: "الكل" },
-            { id: "pending", label: "معلقة" },
+            { id: "pending", label: "بانتظار البدء" },
             { id: "in_progress", label: "قيد التنفيذ" },
             { id: "completed", label: "مكتملة" },
             { id: "rework", label: "إعادة التنظيف ⚠️" }

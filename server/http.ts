@@ -1474,13 +1474,34 @@ app.patch("/api/sop-items/:id", requireAuth, allowRoles("admin", "supervisor"), 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const selected = await client.query("SELECT id, raw_data FROM sop_items WHERE id = $1 FOR UPDATE", [req.params.id]);
+    const selected = await client.query(
+      "SELECT id, title, zone_id, task_code, frequency, recurrence_days, scheduled_time, " +
+        "scheduled_times, default_assignee_id, is_active, created_at, updated_at, raw_data " +
+        "FROM sop_items WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
     if (selected.rowCount !== 1) {
       await client.query("ROLLBACK");
       res.status(404).json({ error: "SOP item not found" }); return;
     }
-    const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
-      ? selected.rows[0].raw_data as Record<string, unknown> : {};
+    const selectedSop = selected.rows[0];
+    const raw = selectedSop.raw_data && typeof selectedSop.raw_data === "object" && !Array.isArray(selectedSop.raw_data)
+      ? selectedSop.raw_data as Record<string, unknown> : {};
+    const current: Record<string, unknown> = {
+      ...raw,
+      id: selectedSop.id,
+      title: selectedSop.title,
+      zone_id: selectedSop.zone_id,
+      task_code: selectedSop.task_code,
+      frequency: selectedSop.frequency,
+      recurrence_days: selectedSop.recurrence_days,
+      scheduled_time: selectedSop.scheduled_time,
+      scheduled_times: selectedSop.scheduled_times,
+      default_assignee_id: selectedSop.default_assignee_id,
+      is_active: selectedSop.is_active,
+      created_at: selectedSop.created_at,
+      updated_at: selectedSop.updated_at,
+    };
     const merged: Record<string, unknown> = { ...current, ...body, id: req.params.id, updated_at: new Date().toISOString() };
     if (typeof merged.title !== "string" || !merged.title.trim() ||
         typeof merged.zone_id !== "string" || typeof merged.frequency !== "string") {

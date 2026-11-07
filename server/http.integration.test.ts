@@ -221,6 +221,10 @@ describe("PostgreSQL HTTP integration", () => {
     }, cleanerCookie);
     expect(completed.response.status).toBe(200);
     expect(completed.payload.data.completed_at).toBeTruthy();
+    const lockedCompletedTask = await api("/api/tasks/" + taskId, "PATCH", {
+      employee_notes: "Attempt to alter submitted evidence",
+    }, cleanerCookie);
+    expect(lockedCompletedTask.response.status).toBe(409);
     const mediaRows = await pool.query(
       "SELECT side, storage_provider, public_id, secure_url, byte_size FROM task_media WHERE task_id = $1 ORDER BY side",
       [taskId],
@@ -235,12 +239,36 @@ describe("PostgreSQL HTTP integration", () => {
     }, supervisorCookie);
     expect(approved.response.status).toBe(200);
     expect(approved.payload.data.supervisor_approved).toBe(true);
+    const duplicateApproval = await api("/api/tasks/" + taskId + "/approve", "POST", {
+      quality_grade: "A", supervisor_notes: "Duplicate approval must be blocked",
+    }, supervisorCookie);
+    expect(duplicateApproval.response.status).toBe(409);
 
     const kpis = await api("/api/kpis", "GET", undefined, adminCookie);
     expect(kpis.response.status).toBe(200);
     const cleanerKpi = kpis.payload.data.find((item: any) => item.profile_id === cleanerId);
     expect(cleanerKpi.tasks_assigned).toBe(2);
     expect(cleanerKpi.quality_score).toBe(80);
+
+    const prematureReject = await api("/api/tasks/" + rejectTaskId + "/reject", "POST", {
+      supervisor_notes: "Pending task must not enter review",
+    }, supervisorCookie);
+    expect(prematureReject.response.status).toBe(409);
+
+    const reworkStarted = await api("/api/tasks/" + rejectTaskId, "PATCH", {
+      status: "in_progress",
+      photo_before_url: "https://res.cloudinary.com/demo/rework-before.jpg",
+      photo_before_public_id: "task-photos/" + zoneId + "/" + rejectTaskId + "/before",
+      photo_before_mime_type: "image/jpeg", photo_before_size: 1024,
+    }, cleanerCookie);
+    expect(reworkStarted.response.status).toBe(200);
+    const reworkCompleted = await api("/api/tasks/" + rejectTaskId, "PATCH", {
+      status: "completed",
+      photo_after_url: "https://res.cloudinary.com/demo/rework-after.jpg",
+      photo_after_public_id: "task-photos/" + zoneId + "/" + rejectTaskId + "/after",
+      photo_after_mime_type: "image/jpeg", photo_after_size: 1024,
+    }, cleanerCookie);
+    expect(reworkCompleted.response.status).toBe(200);
 
     const rejected = await api("/api/tasks/" + rejectTaskId + "/reject", "POST", {
       supervisor_notes: "Integration rejection",

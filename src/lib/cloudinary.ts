@@ -149,6 +149,56 @@ export async function uploadTaskPhotoToCloudinary(
   return uploadToCloudinary(blobOrBase64, "task_photos", context);
 }
 
+/**
+ * Upload a zone cover image using a short-lived server signature.
+ * This avoids exposing an unsigned upload preset in the public Vite bundle.
+ */
+export async function uploadZoneImageToCloudinary(
+  blobOrBase64: Blob | string,
+  zoneId: string,
+): Promise<CloudinaryUploadResult> {
+  if (!zoneId || zoneId.length > 200) {
+    throw new Error("معرّف المنطقة غير صالح.");
+  }
+  const response = await fetch(API_BASE_URL + "/api/media/zone-upload-signature", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ zone_id: zoneId }),
+  });
+  const signed = await response.json().catch(() => ({})) as SignedUploadConfig & { error?: string };
+  if (!response.ok) {
+    throw new Error(signed.error || "تعذر تجهيز رفع صورة المنطقة من الخادم.");
+  }
+  if (!signed.cloud_name || !signed.api_key || !signed.timestamp || !signed.signature || !signed.folder || !signed.tags) {
+    throw new Error("استجابة توقيع رفع صورة المنطقة غير مكتملة.");
+  }
+
+  const file = typeof blobOrBase64 === "string"
+    ? base64ToBlob(blobOrBase64, "image/jpeg")
+    : blobOrBase64;
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("api_key", signed.api_key);
+  formData.append("timestamp", signed.timestamp);
+  formData.append("signature", signed.signature);
+  formData.append("folder", signed.folder);
+  formData.append("tags", signed.tags);
+
+  const uploadResponse = await fetch(
+    `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloud_name)}/image/upload`,
+    { method: "POST", body: formData },
+  );
+  const data = await uploadResponse.json().catch(() => ({})) as CloudinaryUploadResult & { error?: { message?: string } };
+  if (!uploadResponse.ok) {
+    throw new Error(data.error?.message || uploadResponse.statusText || "تعذر رفع صورة المنطقة إلى Cloudinary.");
+  }
+  if (!data.secure_url || !data.public_id) {
+    throw new Error("استجابة Cloudinary غير مكتملة ولم يتم حفظ صورة المنطقة.");
+  }
+  return data;
+}
+
 export interface CloudinaryOrphanRecord {
   public_id: string;
   secure_url: string;

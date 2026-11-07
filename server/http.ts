@@ -961,9 +961,13 @@ app.get("/api/kpis", requireAuth, asyncRoute(async (req, res) => {
     const today = getBusinessDate();
     const [year, month] = today.split("-").map(Number);
     startDate = String(year) + "-" + String(month).padStart(2, "0") + "-01";
-    const nextMonth = new Date(Date.UTC(year, month, 1));
-    endDate = nextMonth.getUTCFullYear() + "-" +
-      String(nextMonth.getUTCMonth() + 1).padStart(2, "0") + "-01";
+    // Date filters are inclusive throughout the reports API. Use the
+    // actual last calendar day of the current month, not the first day of
+    // next month (which previously leaked one extra day's tasks into KPIs).
+    const lastDay = new Date(Date.UTC(year, month, 0));
+    endDate = lastDay.getUTCFullYear() + "-" +
+      String(lastDay.getUTCMonth() + 1).padStart(2, "0") + "-" +
+      String(lastDay.getUTCDate()).padStart(2, "0");
   }
   if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
     res.status(400).json({ error: "Valid startDate and endDate are required" }); return;

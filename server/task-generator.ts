@@ -91,12 +91,14 @@ export interface TaskGenerationSummary {
   skippedAlreadyExists: number;
   skippedNoEligibleCleaner: number;
   runId: string;
+  dryRun: boolean;
 }
 
 export async function generateRecurringTasksForDate(
   pool: Pool,
   date: string,
   now = new Date(),
+  dryRun = false,
 ): Promise<TaskGenerationSummary> {
   const client: PoolClient = await pool.connect();
 
@@ -107,12 +109,13 @@ export async function generateRecurringTasksForDate(
       "naris-task-generator:" + date,
     ]);
 
-    const run = await client.query<{ id: string }>(
-      "INSERT INTO task_generation_runs (run_date, status) " +
-        "VALUES ($1::date, 'running') RETURNING id::text AS id",
-      [date],
-    );
-    const runId = run.rows[0].id;
+    const runId = dryRun
+      ? "dry-run"
+      : (await client.query<{ id: string }>(
+          "INSERT INTO task_generation_runs (run_date, status) " +
+            "VALUES ($1::date, 'running') RETURNING id::text AS id",
+          [date],
+        )).rows[0].id;
 
     const sopRows = await client.query<SopRow>(
       "SELECT id, title, zone_id, task_code, frequency, recurrence_days, " +
@@ -140,6 +143,18 @@ export async function generateRecurringTasksForDate(
       existingTasks: taskRows.rows.map(mapTask),
       now,
     });
+
+    if (dryRun) {
+      await client.query("ROLLBACK");
+      return {
+        date,
+        generated: plan.generated.length,
+        skippedAlreadyExists: plan.skippedAlreadyExists,
+        skippedNoEligibleCleaner: plan.skippedNoEligibleCleaner,
+        runId,
+        dryRun: true,
+      };
+    }
 
     let inserted = 0;
     const insertSql =
@@ -190,11 +205,12 @@ export async function generateRecurringTasksForDate(
       skippedAlreadyExists: plan.skippedAlreadyExists,
       skippedNoEligibleCleaner: plan.skippedNoEligibleCleaner,
       runId,
+      dryRun: false,
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     // Persist failed attempts outside the rolled-back transaction.
-    await pool.query(
+    if (!dryRun) await pool.query(
       "INSERT INTO task_generation_runs " +
         "(run_date, completed_at, status, error_message) " +
         "VALUES ($1::date, NOW(), 'failed', $2)",

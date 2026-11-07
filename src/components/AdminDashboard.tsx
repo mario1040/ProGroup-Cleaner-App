@@ -694,7 +694,6 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
       const compressed = await compressImage(base64String, 1000, 1000, 0.7);
 
       // Upload photo
-      const storagePath = `zones/${zoneId}/cover_${Date.now()}.jpg`;
       const uploaded = await uploadZoneImageToCloudinary(compressed, zoneId);
       const uploadedUrl = uploaded.secure_url;
 

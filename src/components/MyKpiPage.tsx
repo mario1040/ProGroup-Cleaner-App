@@ -58,10 +58,10 @@ export default function MyKpiPage({ user, onBack }: MyKpiPageProps) {
   }, [user.id]);
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-12 font-sans text-right">
+    <div className="min-h-screen bg-[#F4F6FB] pb-12 font-sans text-right">
       {/* Top Banner */}
-      <div className="bg-slate-900 text-white p-6 rounded-b-3xl shadow-md">
-        <div className="max-w-md mx-auto">
+      <div className="rounded-b-[2rem] bg-gradient-to-br from-[#101A33] via-[#172554] to-[#312E81] px-4 py-5 text-white shadow-xl shadow-indigo-950/10 sm:p-6">
+        <div className="mx-auto w-full max-w-3xl">
           <button
             onClick={onBack}
             className="flex items-center gap-1.5 text-slate-300 hover:text-white text-xs font-bold mb-4 bg-slate-800 py-1.5 px-3 rounded-full border border-slate-700 cursor-pointer"
@@ -84,7 +84,7 @@ export default function MyKpiPage({ user, onBack }: MyKpiPageProps) {
         </div>
       </div>
 
-      <div className="max-w-md mx-auto p-4 mt-2 flex flex-col gap-4">
+      <div className="mx-auto mt-3 flex w-full max-w-3xl flex-col gap-4 px-3 sm:px-5">
         {loading ? (
           <div className="text-center py-20 text-slate-400 font-semibold text-xs">
             جاري احتساب مؤشرات الأداء الحالية...

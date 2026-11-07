@@ -33,7 +33,8 @@ import {
   Users,
   Box,
   Zap,
-  Loader2
+  Loader2,
+  Menu
 } from "lucide-react";
 import { 
   getTasks, 
@@ -130,6 +131,7 @@ function ReportImage({
 export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   // Navigation tabs for the Admin Panel
   const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'approvals' | 'kpis' | 'sop' | 'operational' | 'employees' | 'reports' | 'inventory' | 'switch_labels' | 'documentation'>('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   // App data states
   const [tasks, setTasks] = useState<(TaskInstance & { zone?: Zone; assignee?: Profile; template?: TaskTemplate })[]>([]);
@@ -1180,6 +1182,9 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
           BRAND
       ========================================================= */}
       <div className="flex items-center gap-3 min-w-0">
+        <button type="button" onClick={() => setIsSidebarOpen(true)} aria-label="فتح قائمة الإدارة" aria-expanded={isSidebarOpen} className="md:hidden inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700 shadow-sm active:scale-95">
+          <Menu className="h-5 w-5" />
+        </button>
 
         {/* Logo */}
         <div
@@ -1667,10 +1672,19 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
 </header>
 
       {/* Main Admin Layout Sidebar + Content */}
-      <div className="flex flex-1 flex-col md:flex-row">
-        
-        {/* Navigation Sidebar (Dark Slate Theme with Indigo highlights) */}
-        <aside className="w-full md:w-64 bg-[#0F172A] text-white border-b md:border-b-0 md:border-l border-slate-800 p-4 shrink-0 flex flex-col justify-between no-print">
+      <div className="flex flex-1 min-h-0">
+        {isSidebarOpen && <button type="button" aria-label="إغلاق القائمة" onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 z-[79] bg-slate-950/60 backdrop-blur-sm md:hidden" />}
+
+        {/* Side navigation: permanent rail on desktop, right-side drawer on mobile */}
+        <aside className={"fixed inset-y-0 right-0 z-[80] flex h-dvh w-[min(86vw,320px)] shrink-0 flex-col justify-between overflow-y-auto border-l border-slate-800 bg-[#0B1220] p-4 text-white shadow-2xl transition-transform duration-300 ease-out md:sticky md:top-[88px] md:z-20 md:h-[calc(100vh-88px)] md:w-72 md:translate-x-0 md:shadow-none no-print " + (isSidebarOpen ? "translate-x-0" : "translate-x-full")}>
+          <div>
+            <div className="mb-5 flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-950/40"><Grid className="h-5 w-5 text-white" /></div>
+                <div><div className="text-sm font-black text-white">مركز التحكم</div><div className="mt-0.5 text-[10px] text-slate-400">NARIS OPERATIONS</div></div>
+              </div>
+              <button type="button" onClick={() => setIsSidebarOpen(false)} aria-label="إغلاق القائمة" className="rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 hover:bg-white/10 md:hidden"><X className="h-4 w-4" /></button>
+            </div>
           <div className="flex flex-col gap-1.5">
             {[
               { id: 'overview', label: 'اللوحة العامة والتحليلات', icon: Grid },
@@ -1690,15 +1704,15 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center justify-between gap-3 w-full p-2.5 rounded-lg text-right text-xs font-bold cursor-pointer transition duration-150 ${
+                  onClick={() => { setActiveTab(item.id); setIsSidebarOpen(false); }}
+                  className={`group flex min-h-12 items-center justify-between gap-3 w-full rounded-2xl px-3 py-3 text-right text-xs font-bold cursor-pointer transition duration-200 ${
                     isSelected 
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-900/20" 
-                      : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                      ? "bg-gradient-to-l from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-950/40 ring-1 ring-white/10" 
+                      : "text-slate-300 hover:bg-white/[0.07] hover:text-white"
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <Icon className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-slate-400'}`} />
+                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isSelected ? "bg-white/15 text-white" : "bg-white/[0.05] text-slate-400 group-hover:text-white"}`}><Icon className="h-4 w-4" /></span>
                     <span>{item.label}</span>
                   </div>
                   {item.badge > 0 && (
@@ -1711,19 +1725,19 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
             })}
           </div>
 
-          <div className="mt-8 border-t border-slate-800 pt-4 bg-slate-900/40 p-3 rounded-lg flex items-center gap-2.5">
+          </div>
+          <div className="mt-6 border-t border-white/10 pt-4">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center font-bold text-xs">
               👑
             </div>
-            <div>
-              <div className="text-[10px] font-bold text-white">مدير العمليات</div>
-              <div className="text-[9px] text-slate-400">Naris Clean Ops v1.4</div>
+              <div className="min-w-0"><div className="truncate text-[10px] font-bold text-white">{user.full_name || "مدير العمليات"}</div><div className="text-[9px] text-slate-400">Naris Clean Ops</div></div>
             </div>
           </div>
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 p-6 overflow-x-hidden">
+        <main className="min-w-0 flex-1 overflow-x-hidden px-3 py-4 sm:px-5 md:p-6">
           
           {loading ? (
             <div className="flex flex-col items-center justify-center py-32 text-slate-400">

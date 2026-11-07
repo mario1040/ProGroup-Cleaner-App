@@ -370,7 +370,7 @@ export default function TodayTasksPage({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-28 font-sans">
+    <div className="min-h-screen bg-[#F4F6FB] pb-28 font-sans">
       {!isOnlineState && (
         <div className="bg-rose-600 text-white py-3.5 px-4 sticky top-0 z-[60] shadow-md animate-fade-in text-right" dir="rtl">
           <div className="max-w-md mx-auto flex items-center justify-between gap-3">
@@ -416,15 +416,15 @@ export default function TodayTasksPage({
       )}
 
       {/* Modern Top Employee Bar */}
-      <div className="bg-slate-900 text-white rounded-b-3xl shadow-md p-6">
-        <div className="max-w-md mx-auto">
-          <div className="flex justify-between items-start gap-4">
+      <div className="relative overflow-hidden rounded-b-[2rem] bg-gradient-to-br from-[#101A33] via-[#172554] to-[#312E81] px-4 pb-5 pt-4 text-white shadow-xl shadow-indigo-950/10 sm:px-6 sm:pt-6">
+        <div className="relative z-10 mx-auto w-full max-w-3xl">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="flex items-center gap-1.5 mb-2">
                 <ProfessorLogo variant="icon" className="h-6 w-6" />
                 <ProfessorLogo variant="logo-text" light={true} className="h-4.5" />
               </div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              <h2 className="mt-1 flex items-center gap-2 text-lg font-black tracking-tight text-white sm:text-xl">
                 مرحباً، {user.full_name} 👋
               </h2>
               <span className="text-xs text-slate-400 mt-1 inline-block bg-slate-800 py-0.5 px-2 rounded-md border border-slate-700">
@@ -432,30 +432,30 @@ export default function TodayTasksPage({
               </span>
             </div>
             
-            <div className="flex flex-wrap gap-2">
+            <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:min-w-[320px] sm:grid-cols-4">
               <button
                 onClick={onNavigateToSwitchGuide}
-                className="bg-sky-600 hover:bg-sky-700 text-white text-xs py-2 px-3 rounded-xl font-semibold cursor-pointer shadow-md shadow-sky-600/15 transition flex items-center gap-1.5"
+                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/10 px-2.5 py-2.5 text-[11px] font-bold text-white shadow-sm backdrop-blur-md transition active:scale-[0.98] hover:bg-white/15"
               >
                 <BookOpen className="w-3.5 h-3.5 text-sky-200" /> دليل المفاتيح 💡
               </button>
               <button
                 onClick={onNavigateToKpis}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2 px-3 rounded-xl font-semibold cursor-pointer shadow-md shadow-indigo-600/15 transition flex items-center gap-1.5"
+                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/10 px-2.5 py-2.5 text-[11px] font-bold text-white shadow-sm backdrop-blur-md transition active:scale-[0.98] hover:bg-white/15"
               >
                 <Sparkles className="w-3.5 h-3.5 text-indigo-200" /> مؤشراتي 🏆
               </button>
               {onNavigateToDocumentation && (
                 <button
                   onClick={onNavigateToDocumentation}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 px-3 rounded-xl font-semibold cursor-pointer shadow-md shadow-emerald-600/15 transition flex items-center gap-1.5"
+                  className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/10 px-2.5 py-2.5 text-[11px] font-bold text-white shadow-sm backdrop-blur-md transition active:scale-[0.98] hover:bg-white/15"
                 >
                   <BookOpen className="w-3.5 h-3.5 text-emerald-200" /> دليل المنظومة 📖
                 </button>
               )}
               <button
                 onClick={onLogout}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2 px-3 rounded-xl font-semibold cursor-pointer transition border border-slate-700"
+                className="flex min-h-11 items-center justify-center rounded-xl border border-rose-300/20 bg-rose-400/10 px-3 py-2.5 text-[11px] font-bold text-rose-100 transition active:scale-[0.98] hover:bg-rose-400/20"
               >
                 خروج
               </button>
@@ -463,7 +463,7 @@ export default function TodayTasksPage({
           </div>
 
           {/* Core Daily Stats */}
-          <div className="grid grid-cols-3 gap-3 mt-6 bg-slate-800/60 border border-slate-800 p-3 rounded-2xl">
+          <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-white/[0.07] p-2.5 backdrop-blur-md sm:gap-3 sm:p-3">
             <div className="text-center">
               <span className="text-2xl font-extrabold text-white">{tasks.length}</span>
               <span className="text-[10px] text-slate-400 block mt-0.5">إجمالي المهام</span>
@@ -503,7 +503,7 @@ export default function TodayTasksPage({
       </div>
 
       {/* Main Task Feed Container */}
-      <div className="max-w-md mx-auto p-4 mt-2">
+      <div className="mx-auto mt-3 w-full max-w-3xl px-3 sm:px-5">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-500 mb-4 px-1">
           <Calendar className="w-4 h-4 text-slate-400" />
           <span>جدول مهام اليوم:</span>
@@ -513,7 +513,7 @@ export default function TodayTasksPage({
         </div>
 
         {/* Categories / Filter Tabs */}
-        <div className="flex gap-1.5 overflow-x-auto pb-3 scrollbar-none px-1">
+        <div className="sticky top-2 z-20 -mx-1 mb-3 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200/80 bg-white/90 p-2 shadow-sm backdrop-blur-xl scrollbar-none">
           {[
             { id: "all", label: "الكل" },
             { id: "pending", label: "بانتظار البدء" },
@@ -524,7 +524,7 @@ export default function TodayTasksPage({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`py-2 px-4 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer shrink-0 border ${
+              className={`min-h-10 rounded-xl border px-4 py-2.5 text-[11px] font-extrabold whitespace-nowrap transition cursor-pointer shrink-0 active:scale-[0.97] ${
                 activeTab === tab.id
                   ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-600/10"
                   : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
@@ -552,6 +552,9 @@ export default function TodayTasksPage({
             {filteredTasks.map((task) => (
               <div
                 key={task.id}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPhotoBefore(null); setPhotoAfter(null); setNotes(""); setSelectedTask(task); setExecutingStep("details"); } }}
                 onClick={() => {
                   setPhotoBefore(null);
                   setPhotoAfter(null);
@@ -559,7 +562,7 @@ export default function TodayTasksPage({
                   setSelectedTask(task);
                   setExecutingStep('details');
                 }}
-                className={`bg-white border hover:border-slate-300 rounded-2xl p-4 shadow-sm hover:shadow transition duration-200 cursor-pointer flex justify-between items-center relative overflow-hidden ${
+                className={`group w-full min-h-[116px] rounded-[1.35rem] border bg-white p-3.5 shadow-[0_5px_24px_rgba(15,23,42,0.045)] transition duration-200 cursor-pointer flex items-center justify-between gap-3 relative overflow-hidden hover:-translate-y-0.5 hover:shadow-lg active:scale-[0.99] sm:p-4 ${
                   task.task_type === "rework" ? "border-purple-300 bg-purple-50/20" : "border-slate-200"
                 }`}
               >
@@ -568,7 +571,7 @@ export default function TodayTasksPage({
                   <div className="absolute top-0 bottom-0 left-0 w-1.5 bg-purple-500"></div>
                 )}
 
-                <div className="flex flex-col gap-1.5">
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={`text-[10px] font-bold py-0.5 px-2 rounded-full border ${getStatusColor(task.status, task.task_type)}`}>
                       {getStatusLabel(task.status, task.task_type)}
@@ -579,11 +582,11 @@ export default function TodayTasksPage({
                     <TaskTimer task={task} />
                   </div>
 
-                  <h3 className="text-sm font-bold text-slate-800 mt-1">
+                  <h3 className="mt-1 line-clamp-2 text-[13px] font-extrabold leading-6 text-slate-900 sm:text-sm">
                     {task.title}
                   </h3>
 
-                  <div className="flex items-center gap-3 text-slate-500 mt-1">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-500">
                     <span className="text-xs flex items-center gap-1">
                       <MapPin className="w-3.5 h-3.5 text-slate-400" />
                       {task.zone?.name || "مقر الشركة"}
@@ -638,8 +641,8 @@ export default function TodayTasksPage({
 
       {/* Task Modal / Detail Drawer Sheet */}
       {selectedTask && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-end justify-center">
-          <div className="bg-white w-full max-w-md rounded-t-3xl shadow-xl max-h-[92vh] overflow-y-auto pb-8 flex flex-col transform translate-y-0 transition-transform duration-300">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-6">
+          <div className="flex max-h-[min(92dvh,900px)] w-full max-w-xl flex-col overflow-y-auto rounded-t-[2rem] bg-white pb-[max(env(safe-area-inset-bottom),1.5rem)] shadow-2xl transition-transform duration-300 sm:rounded-[2rem]">
             
             {/* Drawer Header */}
             <div className="border-b border-slate-100 p-4 sticky top-0 bg-white z-10 flex justify-between items-center">
@@ -975,8 +978,8 @@ export default function TodayTasksPage({
       )}
 
       {/* Visual Connection Status Indicator Footer */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 text-slate-100 py-3 px-4 shadow-2xl" dir="rtl">
-        <div className="max-w-md mx-auto flex items-center justify-between gap-4">
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-[#10182D]/95 px-3 pb-[max(env(safe-area-inset-bottom),0.65rem)] pt-2.5 text-slate-100 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-2xl" dir="rtl">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-xl shrink-0 transition-colors ${isOnlineState ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
               {isOnlineState ? (

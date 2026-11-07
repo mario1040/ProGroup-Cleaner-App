@@ -196,6 +196,30 @@ describe("PostgreSQL HTTP integration", () => {
     expect(cleanerTasks.response.status).toBe(200);
     expect(cleanerTasks.payload.data.some((task: any) => task.id === taskId)).toBe(true);
 
+    const missingTaskSignature = await api("/api/media/upload-signature", "POST", {
+      task_id: "missing_task_" + suffix,
+      side: "before",
+    }, cleanerCookie);
+    expect(missingTaskSignature.response.status).toBe(404);
+
+    const ownTaskSignature = await api("/api/media/upload-signature", "POST", {
+      task_id: taskId,
+      side: "before",
+    }, cleanerCookie);
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      expect(ownTaskSignature.response.status).toBe(200);
+      expect(ownTaskSignature.payload).toMatchObject({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        folder: "task-photos/" + zoneId + "/" + taskId,
+        tags: "naris-ops,production",
+        side: "before",
+      });
+      expect(ownTaskSignature.payload.signature).toMatch(/^[a-f0-9]{40}$/);
+    } else {
+      expect(ownTaskSignature.response.status).toBe(503);
+    }
+
     const startBlocked = await api("/api/tasks/" + taskId, "PATCH", { status: "in_progress" }, cleanerCookie);
     expect(startBlocked.response.status).toBe(422);
 

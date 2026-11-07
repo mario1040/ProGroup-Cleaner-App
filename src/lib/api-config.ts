@@ -21,7 +21,8 @@ export function isGoogleAiStudioPreviewHost(hostname: string): boolean {
  */
 export function getApiBaseUrl(): string {
   const configured = import.meta.env.VITE_API_BASE_URL;
-  const hostname = typeof window === "undefined" ? "" : window.location.hostname;
+  const location = typeof window === "undefined" ? null : window.location;
+  const hostname = location?.hostname || "";
 
   if (isGoogleAiStudioPreviewHost(hostname)) {
     return typeof configured === "string" && configured.trim()
@@ -29,8 +30,15 @@ export function getApiBaseUrl(): string {
       : DEFAULT_API_BASE_URL;
   }
 
-  if (typeof configured === "string") {
+  if (typeof configured === "string" && configured.trim()) {
     return normalizeApiBaseUrl(configured);
+  }
+
+  // An empty build argument is the deliberate same-origin Nginx mode used by
+  // the Docker web image, not a general development or Vercel fallback.
+  if (configured === "" && import.meta.env.PROD &&
+      (hostname === "naris-front.bezaverse.com" || location?.port === "8081")) {
+    return "";
   }
 
   if (hostname === "localhost" || hostname === "127.0.0.1") {

@@ -287,7 +287,7 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 border border-slate-800">
+              <div className="rounded-[1.75rem] border border-white/70 bg-white p-5 shadow-[0_24px_80px_rgba(2,6,23,0.35)] sm:p-7 md:p-8">
                 <h2 className="text-base font-bold text-slate-800 mb-5 text-center">
                   بوابة الموظفين والمشرفين 🔐
                 </h2>
@@ -304,7 +304,7 @@ export default function App() {
                         placeholder="أدخل اسمك التقني (مثال: afaf, rehab, admin)"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
-                        className="w-full pr-10 pl-3 py-3 border border-slate-200 rounded-xl outline-none focus:border-slate-400 font-bold bg-slate-50/50 text-slate-800"
+                        className="w-full min-h-12 pr-10 pl-3 py-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 font-bold bg-slate-50/80 text-slate-800 transition"
                       />
                     </div>
                   </div>
@@ -320,7 +320,7 @@ export default function App() {
                         placeholder="أدخل كلمة المرور"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        className="w-full pr-10 pl-3 py-3 border border-slate-200 rounded-xl outline-none focus:border-slate-400 bg-slate-50/50 text-slate-800"
+                        className="w-full min-h-12 pr-10 pl-3 py-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 bg-slate-50/80 text-slate-800 transition"
                       />
                     </div>
                   </div>

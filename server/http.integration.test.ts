@@ -304,6 +304,17 @@ describe("PostgreSQL HTTP integration", () => {
     expect(listedSop.zone_id).toBe(zoneId);
     expect(listedSop.frequency).toBe("يومي");
 
+    const dryRun = await generateRecurringTasksForDate(pool, "2099-05-04", new Date(), true);
+    expect(dryRun).toMatchObject({ date: "2099-05-04", generated: 1, dryRun: true });
+    const dryRunTasks = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM task_instances WHERE due_date = '2099-05-04'::date",
+    );
+    const dryRunRuns = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM task_generation_runs WHERE run_date = '2099-05-04'::date",
+    );
+    expect(dryRunTasks.rows[0].count).toBe(0);
+    expect(dryRunRuns.rows[0].count).toBe(0);
+
     const generated = await generateRecurringTasksForDate(pool, "2099-05-03");
     expect(generated.generated).toBe(1);
     const repeated = await generateRecurringTasksForDate(pool, "2099-05-03");

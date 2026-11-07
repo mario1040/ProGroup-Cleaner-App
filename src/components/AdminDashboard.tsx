@@ -69,6 +69,7 @@ import { Profile, Zone, TaskTemplate, TaskInstance, OperationalTask, DeviceSwitc
 import InventoryManager from "./InventoryManager";
 import { imageUrlToDataUrl } from "../lib/cloudinary";
 import { sanitizeCssColors } from "../lib/colorUtils";
+import { getTaskStatusLabel, getTaskApprovalLabel } from "../lib/task-status";
 
 // Import Test Recharts for KPI charts
 import { 
@@ -2437,10 +2438,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                                   task.status === "in_progress" ? "bg-amber-100 text-amber-800 border-amber-200" :
                                   task.status === "rejected" ? "bg-red-100 text-red-800 border-red-200" : "bg-gray-100 text-gray-600 border-gray-200"
                                 }`}>
-                                  {task.status === "completed" && task.supervisor_approved ? "مكتملة ومعتمدة ✅" :
-                                   task.status === "completed" && !task.supervisor_approved ? "بانتظار الاعتماد ⏳" :
-                                   task.status === "in_progress" ? "قيد التنفيذ ⚡" :
-                                   task.status === "rejected" ? "مرفوضة / معطلة" : "معلقة"}
+                                  {getTaskStatusLabel(task.status, { taskType: task.task_type })}
                                 </span>
                               </td>
                               <td className="p-3">
@@ -2477,7 +2475,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       <div className="bg-slate-100/70 p-4 rounded-2xl border border-slate-200">
                         <div className="flex justify-between items-center mb-3">
                           <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                            <span className="w-2.5 h-2.5 bg-slate-400 rounded-full"></span> معلقة بانتظار العمل
+                            <span className="w-2.5 h-2.5 bg-slate-400 rounded-full"></span> بانتظار البدء
                           </h4>
                           <span className="bg-slate-200 text-slate-600 font-bold text-[10px] py-0.5 px-2 rounded-full">
                             {getFilteredTasks().filter(t => t.status === "pending").length}
@@ -2505,7 +2503,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       <div className="bg-slate-100/70 p-4 rounded-2xl border border-slate-200">
                         <div className="flex justify-between items-center mb-3">
                           <h4 className="text-xs font-extrabold text-amber-700 flex items-center gap-1.5">
-                            <span className="w-2.5 h-2.5 bg-amber-400 rounded-full"></span> قيد التنظيف والعمل الآن
+                            <span className="w-2.5 h-2.5 bg-amber-400 rounded-full"></span> قيد التنفيذ
                           </h4>
                           <span className="bg-amber-100 text-amber-800 font-bold text-[10px] py-0.5 px-2 rounded-full">
                             {getFilteredTasks().filter(t => t.status === "in_progress").length}
@@ -2533,7 +2531,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       <div className="bg-slate-100/70 p-4 rounded-2xl border border-slate-200">
                         <div className="flex justify-between items-center mb-3">
                           <h4 className="text-xs font-extrabold text-emerald-800 flex items-center gap-1.5">
-                            <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></span> مكتملة / بانتظار الاعتماد
+                            <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></span> مكتملة
                           </h4>
                           <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] py-0.5 px-2 rounded-full">
                             {getFilteredTasks().filter(t => t.status === "completed").length}
@@ -3816,32 +3814,24 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
 
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {/* Status badge */}
-                                  {task.status === "completed" ? (
-                                    <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold py-1 px-2.5 rounded-full flex items-center gap-1">
-                                      <CheckCircle className="w-3 h-3 text-emerald-600" /> مكتملة
-                                    </span>
-                                  ) : task.status === "in_progress" ? (
-                                    <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold py-1 px-2.5 rounded-full">
-                                      قيد التنفيذ
-                                    </span>
-                                  ) : task.status === "late" ? (
-                                    <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold py-1 px-2.5 rounded-full">
-                                      متأخرة
-                                    </span>
-                                  ) : (
-                                    <span className="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold py-1 px-2.5 rounded-full">
-                                      بانتظار البدء
-                                    </span>
-                                  )}
+                                  <span className={`border text-[10px] font-bold py-1 px-2.5 rounded-full ${
+                                    task.status === "completed" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                    task.status === "in_progress" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                    task.status === "late" ? "bg-red-50 text-red-700 border-red-200" :
+                                    task.status === "rejected" ? "bg-rose-50 text-rose-700 border-rose-200" :
+                                    "bg-amber-50 text-amber-700 border-amber-200"
+                                  }`}>
+                                    {getTaskStatusLabel(task.status, { taskType: task.task_type })}
+                                  </span>
 
                                   {/* Approval status */}
                                   {task.supervisor_approved ? (
                                     <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold py-1 px-2.5 rounded-full">
-                                      ✓ تم الاعتماد من المشرف
+                                      ✓ {getTaskApprovalLabel(task.supervisor_approved)}
                                     </span>
                                   ) : task.status === "completed" && (
                                     <span className="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold py-1 px-2.5 rounded-full animate-pulse">
-                                      ⏳ بانتظار التدقيق والاعتماد
+                                      ⏳ {getTaskApprovalLabel(task.supervisor_approved)}
                                     </span>
                                   )}
                                 </div>

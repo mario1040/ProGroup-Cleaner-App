@@ -1648,7 +1648,7 @@ app.post("/api/media/upload-signature", requireAuth, asyncRoute(async (req, res)
     res.status(403).json({ error: "Not authorized to upload task media" }); return;
   }
   const taskResult = await pool.query(
-    "SELECT assigned_to, zone_id FROM task_instances WHERE id = $1",
+    "SELECT assigned_to, zone_id, status FROM task_instances WHERE id = $1",
     [taskId],
   );
   if (taskResult.rowCount !== 1) {
@@ -1657,6 +1657,11 @@ app.post("/api/media/upload-signature", requireAuth, asyncRoute(async (req, res)
   const task = taskResult.rows[0];
   if (req.auth?.role === "cleaner" && task.assigned_to !== req.auth.id) {
     res.status(403).json({ error: "You can only upload evidence for your assigned tasks" }); return;
+  }
+  if (req.auth?.role === "cleaner" &&
+      ((side === "before" && task.status !== "pending") ||
+       (side === "after" && task.status !== "in_progress"))) {
+    res.status(409).json({ error: "Photo evidence can only be uploaded at the matching task step." }); return;
   }
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "";
   const apiKey = process.env.CLOUDINARY_API_KEY || "";

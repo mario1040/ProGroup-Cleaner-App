@@ -123,9 +123,36 @@ function allowRoles(...roles: Role[]) {
     next();
   };
 }
+function isHealthProbePath(pathname: string): boolean {
+  return /^\\/health\\/(live|db|ready)$/.test(pathname);
+}
+
+function isTrustedPreviewOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "https:" || parsed.origin !== origin) return false;
+    const host = parsed.hostname.toLowerCase();
+    return host.endsWith(".run.app") ||
+      host.endsWith(".googleusercontent.com") ||
+      host === "aistudio.google.com" ||
+      host.endsWith(".aistudio.google.com");
+  } catch {
+    return false;
+  }
+}
+
 function requireSameOrigin(req: Request, res: Response, next: NextFunction): void {
   const origin = req.get("origin");
   const isStateChanging = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+  const publicHealthRead = isHealthProbePath(req.path) &&
+    ["GET", "HEAD"].includes(req.method) &&
+    (!origin || allowedOrigins.has(origin) || isTrustedPreviewOrigin(origin));
+
+  if (publicHealthRead) {
+    next();
+    return;
+  }
+
   // Browser state-changing requests always carry Origin. In production, reject
   // origin-less writes so an attacker cannot bypass the allowlist via CSRF.
   if (isStateChanging && process.env.NODE_ENV === "production" && !origin) {
@@ -205,14 +232,31 @@ app.use((_req, res, next) => {
 });
 app.use((req, res, next) => {
   const origin = req.get("origin");
-  if (origin && allowedOrigins.has(origin)) {
+  const healthProbe = isHealthProbePath(req.path);
+  const originAllowed = Boolean(origin && (
+    allowedOrigins.has(origin) ||
+    (healthProbe && isTrustedPreviewOrigin(origin))
+  ));
+
+  if (origin && originAllowed) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
+    // Preview health probes are public and must not receive credential access.
+    if (allowedOrigins.has(origin)) {
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Requested-With");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   }
-  if (req.method === "OPTIONS") { res.sendStatus(204); return; }
+
+  if (req.method === "OPTIONS") {
+    if (origin && !originAllowed) {
+      res.status(403).json({ error: "Origin not allowed" });
+      return;
+    }
+    res.sendStatus(204);
+    return;
+  }
   next();
 });
 app.use(express.json({ limit: "2mb", strict: true }));
@@ -283,33 +327,90 @@ app.get("/api/auth/me", requireAuth, (req: AuthRequest, res) => {
   res.json({ user: req.auth });
 });
 
-app.get("/health/live", (_req, res) => res.json({ status: "ok" }));
-app.get("/health/ready", asyncRoute(async (_req, res) => {
-  const result = await pool.query<{ missing: string[] }>(
-    "SELECT ARRAY_REMOVE(ARRAY[" +
-      "CASE WHEN to_regclass('public.users') IS NULL THEN 'users' END, " +
-      "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
-      "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
-      "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
-      "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
-      "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
-      "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
-      "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
-      "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
-      "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
-      "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
-      "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +
-      "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END, " +
-      "CASE WHEN to_regclass('public.inventory_items') IS NULL THEN 'inventory_items' END" +
-    "], NULL) AS missing",
-  );
-  const missing = result.rows[0]?.missing || [];
-  if (missing.length > 0) {
-    res.status(503).json({ status: "not_ready", database: "connected", missing });
-    return;
+app.get("/health/live", (_req, res) => {
+  res.json({
+    ok: true,
+    status: "ok",
+    service: "naris-api",
+    checkedAt: new Date().toISOString(),
+  });
+});
+
+app.get("/health/db", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({
+      ok: true,
+      database: "connected",
+      query: true,
+      checkedAt: new Date().toISOString(),
+    });
+  } catch {
+    res.status(503).json({
+      ok: false,
+      status: "not_ready",
+      database: "disconnected",
+      query: false,
+      error: "Database connection failed",
+      checkedAt: new Date().toISOString(),
+    });
   }
-  res.json({ status: "ready", database: "connected", schema: "present" });
-}));
+});
+
+app.get("/health/ready", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    const result = await pool.query<{ missing: string[] }>(
+      "SELECT ARRAY_REMOVE(ARRAY[" +
+        "CASE WHEN to_regclass('public.users') IS NULL THEN 'users' END, " +
+        "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
+        "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
+        "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
+        "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
+        "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
+        "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
+        "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
+        "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
+        "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
+        "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
+        "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +
+        "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END, " +
+        "CASE WHEN to_regclass('public.inventory_items') IS NULL THEN 'inventory_items' END" +
+      "], NULL) AS missing",
+    );
+    const missingTables = result.rows[0]?.missing || [];
+    if (missingTables.length > 0) {
+      res.status(503).json({
+        ok: false,
+        status: "not_ready",
+        database: "connected",
+        checks: { connection: true, query: true, requiredTables: false },
+        missingTables,
+        checkedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      status: "ready",
+      database: "connected",
+      checks: { connection: true, query: true, requiredTables: true },
+      missingTables: [],
+      checkedAt: new Date().toISOString(),
+    });
+  } catch {
+    res.status(503).json({
+      ok: false,
+      status: "not_ready",
+      database: "disconnected",
+      checks: { connection: false, query: false, requiredTables: false },
+      missingTables: [],
+      error: "Database readiness check failed",
+      checkedAt: new Date().toISOString(),
+    });
+  }
+});
 
 app.get("/api/users", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
   const result = await pool.query(

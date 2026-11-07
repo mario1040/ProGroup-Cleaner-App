@@ -124,7 +124,7 @@ function allowRoles(...roles: Role[]) {
   };
 }
 function isHealthProbePath(pathname: string): boolean {
-  return /^\\/health\\/(live|db|ready)$/.test(pathname);
+  return /^\/health\/(live|db|ready)$/.test(pathname);
 }
 
 function isTrustedPreviewOrigin(origin: string): boolean {

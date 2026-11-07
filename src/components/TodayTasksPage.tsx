@@ -418,7 +418,7 @@ export default function TodayTasksPage({
       {/* Modern Top Employee Bar */}
       <div className="relative overflow-hidden rounded-b-[2rem] bg-gradient-to-br from-[#101A33] via-[#172554] to-[#312E81] px-4 pb-5 pt-4 text-white shadow-xl shadow-indigo-950/10 sm:px-6 sm:pt-6">
         <div className="relative z-10 mx-auto w-full max-w-3xl">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="flex items-center gap-1.5 mb-2">
                 <ProfessorLogo variant="icon" className="h-6 w-6" />
@@ -432,7 +432,7 @@ export default function TodayTasksPage({
               </span>
             </div>
             
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:min-w-[320px] sm:grid-cols-4">
               <button
                 onClick={onNavigateToSwitchGuide}
                 className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/10 px-2.5 py-2.5 text-[11px] font-bold text-white shadow-sm backdrop-blur-md transition active:scale-[0.98] hover:bg-white/15"
@@ -552,6 +552,9 @@ export default function TodayTasksPage({
             {filteredTasks.map((task) => (
               <div
                 key={task.id}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPhotoBefore(null); setPhotoAfter(null); setNotes(""); setSelectedTask(task); setExecutingStep("details"); } }}
                 onClick={() => {
                   setPhotoBefore(null);
                   setPhotoAfter(null);

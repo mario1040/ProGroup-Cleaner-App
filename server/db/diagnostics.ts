@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   try {
     const [database, users, adminAccounts, cleaners, sopFrequencies, sopWarnings,
       todayTasks, todayRuns, integrity, sourceCollections, archiveCoverage, monthlyArchive,
-      sourceParity, monthlySourceParity, snapshotCoverage, snapshotsByPeriod, mediaIntegrity, media] = await Promise.all([
+      sourceParity, monthlySourceParity, postImportTasksByMonth, snapshotCoverage, snapshotsByPeriod, mediaIntegrity, media] = await Promise.all([
       pool.query(
         "SELECT current_database() AS database, current_user AS runtime_role, " +
         "current_setting('server_version') AS postgres_version",
@@ -113,29 +113,52 @@ async function main(): Promise<void> {
         "FROM task_instances GROUP BY date_trunc('month', due_date) ORDER BY date_trunc('month', due_date)",
       ),
       pool.query(
-        "SELECT COUNT(*)::int AS normalized_tasks, " +
-        "(SELECT COUNT(*)::int FROM firestore_documents WHERE collection_name = 'task_instances') AS source_documents, " +
+        "WITH source AS (" +
+        " SELECT document_id, MAX(imported_at) OVER () AS last_import_at " +
+        " FROM firestore_documents WHERE collection_name = 'task_instances'" +
+        "), source_stats AS (" +
+        " SELECT COUNT(*)::int AS source_documents, MAX(imported_at) AS last_import_at " +
+        " FROM firestore_documents WHERE collection_name = 'task_instances'" +
+        ") SELECT (SELECT COUNT(*)::int FROM task_instances) AS normalized_tasks, " +
+        "ss.source_documents, ss.last_import_at, " +
+        "(SELECT COUNT(*)::int FROM task_instances t JOIN source s ON s.document_id = t.id) AS matched_imported_tasks, " +
         "(SELECT COUNT(*)::int FROM task_instances t WHERE NOT EXISTS (" +
-        " SELECT 1 FROM firestore_documents d WHERE d.collection_name = 'task_instances' AND d.document_id = t.id)) AS normalized_without_source, " +
-        "(SELECT COUNT(*)::int FROM firestore_documents d WHERE d.collection_name = 'task_instances' AND NOT EXISTS (" +
-        " SELECT 1 FROM task_instances t WHERE t.id = d.document_id)) AS source_without_normalized, " +
+        " SELECT 1 FROM source s WHERE s.document_id = t.id)) AS normalized_without_source, " +
+        "(SELECT COUNT(*)::int FROM task_instances t CROSS JOIN source_stats x " +
+        " WHERE NOT EXISTS (SELECT 1 FROM source s WHERE s.document_id = t.id) " +
+        " AND x.last_import_at IS NOT NULL AND t.created_at > x.last_import_at) AS post_import_native_tasks, " +
+        "(SELECT COUNT(*)::int FROM task_instances t CROSS JOIN source_stats x " +
+        " WHERE NOT EXISTS (SELECT 1 FROM source s WHERE s.document_id = t.id) " +
+        " AND (x.last_import_at IS NULL OR t.created_at <= x.last_import_at)) AS unmatched_created_before_or_during_import, " +
+        "(SELECT COUNT(*)::int FROM firestore_documents d WHERE d.collection_name = 'task_instances' " +
+        " AND NOT EXISTS (SELECT 1 FROM task_instances t WHERE t.id = d.document_id)) AS source_without_normalized, " +
         "(SELECT COUNT(*)::int FROM (SELECT document_id FROM firestore_documents " +
         " WHERE collection_name = 'task_instances' GROUP BY document_id HAVING COUNT(*) > 1) duplicates) AS duplicate_source_ids " +
-        "FROM task_instances",
+        "FROM source_stats ss",
       ),
       pool.query(
         "WITH source_monthly AS (" +
-        " SELECT to_char(substring(data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM') AS month, COUNT(*)::int AS total " +
-        " FROM firestore_documents WHERE collection_name = 'task_instances' " +
-        " AND data->>'due_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' " +
-        " GROUP BY to_char(substring(data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM')" +
-        "), normalized_monthly AS (" +
-        " SELECT to_char(date_trunc('month', due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
-        " FROM task_instances GROUP BY date_trunc('month', due_date)" +
+        " SELECT to_char(substring(d.data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM') AS month, COUNT(*)::int AS total " +
+        " FROM firestore_documents d WHERE d.collection_name = 'task_instances' " +
+        " AND d.data->>'due_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' " +
+        " GROUP BY to_char(substring(d.data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM')" +
+        "), normalized_imported_monthly AS (" +
+        " SELECT to_char(date_trunc('month', t.due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
+        " FROM task_instances t JOIN firestore_documents d ON d.collection_name = 'task_instances' AND d.document_id = t.id " +
+        " GROUP BY date_trunc('month', t.due_date)" +
         ") SELECT COALESCE(s.month, n.month) AS month, COALESCE(s.total,0)::int AS source_total, " +
-        "COALESCE(n.total,0)::int AS normalized_total " +
-        "FROM source_monthly s FULL OUTER JOIN normalized_monthly n ON n.month = s.month " +
+        "COALESCE(n.total,0)::int AS normalized_imported_total " +
+        "FROM source_monthly s FULL OUTER JOIN normalized_imported_monthly n ON n.month = s.month " +
         "WHERE COALESCE(s.total,0) <> COALESCE(n.total,0) ORDER BY month",
+      ),
+      pool.query(
+        "SELECT to_char(date_trunc('month', t.due_date), 'YYYY-MM') AS month, " +
+        "COUNT(*)::int AS post_import_native_tasks " +
+        "FROM task_instances t " +
+        "WHERE NOT EXISTS (SELECT 1 FROM firestore_documents d " +
+        " WHERE d.collection_name = 'task_instances' AND d.document_id = t.id) " +
+        "AND t.created_at > (SELECT MAX(imported_at) FROM firestore_documents WHERE collection_name = 'task_instances') " +
+        "GROUP BY date_trunc('month', t.due_date) ORDER BY date_trunc('month', t.due_date)",
       ),
       pool.query(
         "SELECT COUNT(*)::int AS total_snapshots, MIN(period_start)::text AS first_period_start, " +
@@ -177,7 +200,7 @@ async function main(): Promise<void> {
       archiveCoverage: archiveCoverage.rows[0],
       monthlyArchive: monthlyArchive.rows,
       taskSourceParity: sourceParity.rows[0],
-      monthlyTaskSourceParityMismatches: monthlySourceParity.rows,
+      monthlyTaskSourceParityMismatches: monthlySourceParity.rows,\n      postImportTasksByMonth: postImportTasksByMonth.rows,
       historicalKpiSnapshotCoverage: snapshotCoverage.rows[0],
       kpiSnapshotsByPeriod: snapshotsByPeriod.rows,
       taskMediaIntegrity: mediaIntegrity.rows[0],

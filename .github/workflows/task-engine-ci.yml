@@ -71,6 +71,8 @@ jobs:
         run: echo "DATABASE_URL=$APP_DATABASE_URL" >> "$GITHUB_ENV"
       - name: Verify PostgreSQL schema and runtime permissions
         run: npx tsx server/db/schema-smoke.ts
+      - name: Run read-only database diagnostics
+        run: npm run db:diagnostics
       - name: Run task-engine tests
         run: npx vitest run server
       - name: TypeScript check

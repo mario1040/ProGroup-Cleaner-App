@@ -18,7 +18,7 @@ function getBusinessDate(): string {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
-  const date = args.find((arg) => /^\\d{4}-\\d{2}-\\d{2}$/.test(arg)) || getBusinessDate();
+  const date = args.find((arg) => /^\d{4}-\d{2}-\d{2}$/.test(arg)) || getBusinessDate();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw new Error("Date must use YYYY-MM-DD format.");
   }

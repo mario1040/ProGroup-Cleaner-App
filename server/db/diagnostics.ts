@@ -109,7 +109,7 @@ async function main(): Promise<void> {
         "COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected, " +
         "COUNT(*) FILTER (WHERE status = 'pending')::int AS pending, " +
         "COUNT(*) FILTER (WHERE status = 'in_progress')::int AS in_progress, " +
-        "COUNT(*) FILTER (WHERE status = 'completed' AND COALESCE((raw_data->>'supervisor_approved')::boolean, FALSE))::int AS supervisor_approved " +
+        "COUNT(*) FILTER (WHERE status = 'completed' AND LOWER(COALESCE(raw_data->>'supervisor_approved','false')) = 'true')::int AS supervisor_approved " +
         "FROM task_instances GROUP BY date_trunc('month', due_date) ORDER BY date_trunc('month', due_date)",
       ),
       pool.query(

@@ -246,7 +246,10 @@ app.use((req, res, next) => {
       res.setHeader("Access-Control-Allow-Credentials", "true");
     }
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Requested-With");
-    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      allowedOrigins.has(origin) ? "GET, POST, PATCH, DELETE, OPTIONS" : "GET, HEAD, OPTIONS",
+    );
   }
 
   if (req.method === "OPTIONS") {

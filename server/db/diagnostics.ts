@@ -114,7 +114,7 @@ async function main(): Promise<void> {
       ),
       pool.query(
         "WITH source AS (" +
-        " SELECT document_id, MAX(imported_at) OVER () AS last_import_at " +
+        " SELECT DISTINCT document_id " +
         " FROM firestore_documents WHERE collection_name = 'task_instances'" +
         "), source_stats AS (" +
         " SELECT COUNT(*)::int AS source_documents, MAX(imported_at) AS last_import_at " +
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
         " GROUP BY to_char(substring(d.data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM')" +
         "), normalized_imported_monthly AS (" +
         " SELECT to_char(date_trunc('month', t.due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
-        " FROM task_instances t JOIN firestore_documents d ON d.collection_name = 'task_instances' AND d.document_id = t.id " +
+        " FROM task_instances t JOIN firestore_documents d ON d.collection_name = 'task_instances' AND d.document_id = t.id " +\n        " AND d.data->>'due_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' " +
         " GROUP BY date_trunc('month', t.due_date)" +
         ") SELECT COALESCE(s.month, n.month) AS month, COALESCE(s.total,0)::int AS source_total, " +
         "COALESCE(n.total,0)::int AS normalized_imported_total " +

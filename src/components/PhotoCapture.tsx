@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Camera, RefreshCw, Upload, CheckCircle, Loader2, AlertCircle, Trash2, ShieldCheck } from "lucide-react";
-import { uploadToCloudinary } from "../lib/cloudinary";
+import { uploadTaskPhotoToCloudinary } from "../lib/cloudinary";
 import { deletePhoto } from "../lib/api-postgres";
 import { compressImage } from "../lib/api-postgres";
 
@@ -167,7 +167,7 @@ export default function PhotoCapture({ label, onPhotoUploaded, required = true, 
       }
       const taskId = pathParts[2];
       const side = pathParts[pathParts.length - 1].toLowerCase().startsWith("before") ? "before" : "after";
-      const result = await uploadToCloudinary(payload, folder, { taskId, side });
+      const result = await uploadTaskPhotoToCloudinary(payload, { taskId, side });
       const publicId = result.public_id;
       if (!publicId || !result.secure_url) throw new Error("Cloudinary لم يُرجع معرف الصورة ورابطها الآمن.");
       const uploadedMetadata = {

@@ -135,6 +135,20 @@ export async function uploadToCloudinary(
   };
 }
 
+/**
+ * Explicit signed-upload entry point for cleaner task evidence.
+ * This path never reads VITE_CLOUDINARY_UPLOAD_PRESET.
+ */
+export async function uploadTaskPhotoToCloudinary(
+  blobOrBase64: Blob | string,
+  context: TaskPhotoUploadContext,
+): Promise<CloudinaryUploadResult> {
+  if (!context.taskId || (context.side !== "before" && context.side !== "after")) {
+    throw new Error("بيانات المهمة أو مرحلة الصورة غير صالحة.");
+  }
+  return uploadToCloudinary(blobOrBase64, "task_photos", context);
+}
+
 export interface CloudinaryOrphanRecord {
   public_id: string;
   secure_url: string;

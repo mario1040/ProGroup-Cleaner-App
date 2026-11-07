@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "server/**"
+      - "src/**"
       - "db/**"
       - "package.json"
       - "tsconfig.json"

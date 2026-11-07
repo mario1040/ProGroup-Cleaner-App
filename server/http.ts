@@ -5,6 +5,7 @@ import { Pool, type PoolClient } from "pg";
 import { assertNarisDatabaseUrl } from "./db/connection";
 import { applyTaskUpdate, getTaskPhotoUrls, type TaskRecord } from "./task-rules";
 import { generateRecurringTasksForDate } from "./task-generator";
+import { isTaskGenerationEnabled } from "./task-scheduler";
 
 type Role = "admin" | "supervisor" | "cleaner";
 interface AuthContext { id: string; username: string; full_name: string; role: Role; is_active: boolean; }
@@ -2364,7 +2365,7 @@ async function start(): Promise<void> {
     process.stdout.write("Naris Ops API listening on port " + PORT + "\n");
   });
   let scheduler: ReturnType<typeof setInterval> | undefined;
-  if (process.env.TASK_GENERATION_ENABLED === "true") {
+  if (isTaskGenerationEnabled(process.env.TASK_GENERATION_ENABLED)) {
     let schedulerRunning = false;
     const runScheduler = async () => {
       if (schedulerRunning) return;
@@ -2380,7 +2381,7 @@ async function start(): Promise<void> {
     void runScheduler();
     scheduler = setInterval(() => void runScheduler(), 60_000);
   } else {
-    process.stdout.write("Daily task generation is disabled; enable it after data import.\\n");
+    process.stdout.write("[Task generator] Scheduler disabled by TASK_GENERATION_ENABLED=false.\\n");
   }
   const shutdown = (signal: string) => {
     if (scheduler) clearInterval(scheduler);

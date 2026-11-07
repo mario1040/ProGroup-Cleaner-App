@@ -127,11 +127,15 @@ async function main(): Promise<void> {
         "WITH source_monthly AS (" +
         " SELECT to_char((data->>'due_date')::date, 'YYYY-MM') AS month, COUNT(*)::int AS total " +
         " FROM firestore_documents WHERE collection_name = 'task_instances' " +
-        " AND data->>'due_date' ~ '^\\\\d{4}-\\\\d{2}-\\\\d{2}
-        "MAX(period_end)::text AS last_period_end, " +
-        "COUNT(*) FILTER (WHERE profile_id IS NULL OR NOT EXISTS " +
-        "(SELECT 1 FROM users u WHERE u.id = k.profile_id))::int AS snapshots_without_profile " +
-        "FROM kpi_snapshots k",
+        " AND data->>'due_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' " +
+        " GROUP BY to_char((data->>'due_date')::date, 'YYYY-MM')" +
+        "), normalized_monthly AS (" +
+        " SELECT to_char(date_trunc('month', due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
+        " FROM task_instances GROUP BY date_trunc('month', due_date)" +
+        ") SELECT COALESCE(s.month, n.month) AS month, COALESCE(s.total,0)::int AS source_total, " +
+        "COALESCE(n.total,0)::int AS normalized_total " +
+        "FROM source_monthly s FULL OUTER JOIN normalized_monthly n ON n.month = s.month " +
+        "WHERE COALESCE(s.total,0) <> COALESCE(n.total,0) ORDER BY month",
       ),
       pool.query(
         "SELECT period_type, COUNT(*)::int AS total, MIN(period_start)::text AS first_period_start, " +

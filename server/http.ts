@@ -370,6 +370,7 @@ app.get("/health/ready", async (_req, res) => {
         "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
         "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
         "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
+        "CASE WHEN to_regclass('public.task_generation_runs') IS NULL THEN 'task_generation_runs' END, " +
         "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
         "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
         "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +

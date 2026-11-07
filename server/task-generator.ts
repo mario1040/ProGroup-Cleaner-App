@@ -7,7 +7,18 @@ import {
   type TaskZone,
 } from "./task-engine";
 
-interface RawJsonRow extends Record<string, unknown> {
+interface SopRow extends Record<string, unknown> {
+  id: string;
+  title: string;
+  zone_id: string;
+  task_code: string | null;
+  frequency: string;
+  recurrence_days: unknown;
+  scheduled_time: string | null;
+  scheduled_times: unknown;
+  default_assignee_id: string | null;
+  is_active: boolean;
+  created_at: Date | string | null;
   raw_data: Record<string, unknown>;
 }
 
@@ -17,12 +28,31 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-function mapSop(row: RawJsonRow): RecurringSop {
-  const data = row.raw_data;
+function mapSop(row: SopRow): RecurringSop {
+  const data = row.raw_data && typeof row.raw_data === "object" && !Array.isArray(row.raw_data)
+    ? row.raw_data
+    : {};
+  const createdAt = row.created_at ?? data.created_at;
+
+  // Normalized PostgreSQL columns are authoritative. raw_data is retained only
+  // for descriptive/optional fields and legacy compatibility.
   return {
     ...(data as unknown as RecurringSop),
-    recurrence_days: stringArray(data.recurrence_days),
-    scheduled_times: stringArray(data.scheduled_times),
+    id: String(row.id),
+    title: String(row.title || data.title || ""),
+    zone_id: String(row.zone_id || data.zone_id || ""),
+    task_code: row.task_code ?? (typeof data.task_code === "string" ? data.task_code : undefined),
+    frequency: String(row.frequency || data.frequency || ""),
+    recurrence_days: Array.isArray(row.recurrence_days)
+      ? stringArray(row.recurrence_days)
+      : stringArray(data.recurrence_days),
+    scheduled_time: row.scheduled_time ?? (typeof data.scheduled_time === "string" ? data.scheduled_time : null),
+    scheduled_times: Array.isArray(row.scheduled_times)
+      ? stringArray(row.scheduled_times)
+      : stringArray(data.scheduled_times),
+    default_assignee_id: row.default_assignee_id,
+    is_active: row.is_active === true,
+    created_at: createdAt instanceof Date ? createdAt.toISOString() : typeof createdAt === "string" ? createdAt : undefined,
   };
 }
 
@@ -84,8 +114,10 @@ export async function generateRecurringTasksForDate(
     );
     const runId = run.rows[0].id;
 
-    const sopRows = await client.query<RawJsonRow>(
-      "SELECT raw_data FROM sop_items WHERE is_active = TRUE ORDER BY id",
+    const sopRows = await client.query<SopRow>(
+      "SELECT id, title, zone_id, task_code, frequency, recurrence_days, " +
+        "scheduled_time, scheduled_times, default_assignee_id, is_active, created_at, raw_data " +
+        "FROM sop_items WHERE is_active = TRUE ORDER BY id",
     );
     const profileRows = await client.query<Record<string, unknown>>(
       "SELECT id, role, is_active FROM users " +

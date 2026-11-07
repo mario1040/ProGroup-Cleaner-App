@@ -1028,19 +1028,32 @@ app.get("/api/kpis", requireAuth, asyncRoute(async (req, res) => {
 app.get("/api/kpi-snapshots", requireAuth, asyncRoute(async (req, res) => {
   const requestedProfile = typeof req.query.profileId === "string" ? req.query.profileId : null;
   const profileId = req.auth?.role === "cleaner" ? req.auth.id : requestedProfile;
+  const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
+  const rawOffset = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 500 ||
+      !Number.isInteger(rawOffset) || rawOffset < 0 || rawOffset > 1_000_000) {
+    res.status(400).json({ error: "limit must be 1-500 and offset must be 0-1000000" }); return;
+  }
   const values: unknown[] = [];
   let where = "";
   if (profileId) {
     values.push(profileId);
     where = " WHERE profile_id = $" + values.length;
   }
-  values.push(100);
+  values.push(rawLimit);
+  const limitParameter = values.length;
+  values.push(rawOffset);
+  const offsetParameter = values.length;
   const result = await pool.query(
     "SELECT id, raw_data FROM kpi_snapshots" + where +
-      " ORDER BY period_end DESC NULLS LAST, id LIMIT $" + values.length,
+      " ORDER BY period_end DESC NULLS LAST, id LIMIT $" + limitParameter +
+      " OFFSET $" + offsetParameter,
     values,
   );
-  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+  res.json({
+    data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })),
+    meta: { limit: rawLimit, offset: rawOffset },
+  });
 }));
 
 app.get("/api/system/validation", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {

@@ -1638,6 +1638,42 @@ app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncR
   });
 }));
 
+app.post("/api/media/upload-signature", requireAuth, asyncRoute(async (req, res) => {
+  const taskId = typeof req.body?.task_id === "string" ? req.body.task_id.trim() : "";
+  const side = req.body?.side;
+  if (!taskId || taskId.length > 200 || (side !== "before" && side !== "after")) {
+    res.status(400).json({ error: "task_id and a valid photo side are required" }); return;
+  }
+  if (req.auth?.role !== "cleaner" && req.auth?.role !== "admin" && req.auth?.role !== "supervisor") {
+    res.status(403).json({ error: "Not authorized to upload task media" }); return;
+  }
+  const taskResult = await pool.query(
+    "SELECT assigned_to, zone_id FROM task_instances WHERE id = $1",
+    [taskId],
+  );
+  if (taskResult.rowCount !== 1) {
+    res.status(404).json({ error: "Task not found" }); return;
+  }
+  const task = taskResult.rows[0];
+  if (req.auth?.role === "cleaner" && task.assigned_to !== req.auth.id) {
+    res.status(403).json({ error: "You can only upload evidence for your assigned tasks" }); return;
+  }
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "";
+  const apiKey = process.env.CLOUDINARY_API_KEY || "";
+  const apiSecret = process.env.CLOUDINARY_API_SECRET || "";
+  if (!cloudName || !apiKey || !apiSecret) {
+    res.status(503).json({ error: "Cloudinary server-side upload signing is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET on the API container." }); return;
+  }
+  const folder = "task-photos/" + String(task.zone_id) + "/" + taskId;
+  const tags = "naris-ops,production";
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = createHash("sha1")
+    .update("folder=" + folder + "&tags=" + tags + "&timestamp=" + timestamp + apiSecret, "utf8")
+    .digest("hex");
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ cloud_name: cloudName, api_key: apiKey, timestamp, signature, folder, tags, side });
+}));
+
 app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {
   const publicId = typeof req.body?.public_id === "string" ? req.body.public_id.trim() : "";
   const taskId = typeof req.body?.task_id === "string" ? req.body.task_id.trim() : "";

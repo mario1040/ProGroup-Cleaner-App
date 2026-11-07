@@ -101,3 +101,19 @@ textarea {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media (max-width: 767px) {
+  main table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  [role="button"]:focus-visible,
+  button:focus-visible {
+    outline: 3px solid rgba(99, 102, 241, 0.55);
+    outline-offset: 2px;
+  }
+}

@@ -51,7 +51,7 @@ Start the API after setting server-only environment variables:
 DATABASE_URL=postgresql://APP_USER:APP_PASSWORD@POSTGRES_HOST:5432/naris_ops
 API_PORT=4000
 PG_POOL_MAX=10
-TASK_GENERATION_ENABLED=false
+TASK_GENERATION_ENABLED=true
 PG_SSL=false
 APP_TIME_ZONE=Africa/Cairo
 APP_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -80,7 +80,7 @@ The API uses opaque random session tokens; only token hashes are stored in Postg
 
 The generator uses the same recurrence and assignment policy as the existing app: active SOPs only; configured scheduled times; Arabic weekday recurrence; default SOP assignee, then zone responsible employee, then least-loaded active cleaner. It intentionally does not add shift/work-day filtering that the source implementation did not have.
 
-Automatic generation is opt-in and stays disabled unless `TASK_GENERATION_ENABLED=true`. This prevents an empty database from recording a successful zero-task run before the Firestore import. After import and same-date reconciliation, enable the flag; the API then checks the current business date at startup and every 60 seconds. It generates the day's recurring tasks once a successful run exists. Generation uses a transaction, a per-date advisory lock, deterministic task IDs, and a uniqueness index to protect against duplicate tasks across concurrent API instances. Failed runs are logged and retried on a later check.
+Automatic generation is enabled by default for normal operations. Set `TASK_GENERATION_ENABLED=false` during initial provisioning/import and same-date reconciliation so an empty database cannot record a successful zero-task run. After the import is complete and the same-date dry-run has been reviewed, set it to `true`; the API checks the current business date at startup and every 60 seconds. It generates the day's recurring tasks once a successful run exists. Generation uses a transaction, a per-date advisory lock, deterministic task IDs, and a uniqueness index to protect against duplicate tasks across concurrent API instances. Failed runs are logged and retried on a later check.
 
 Manual one-off generation remains available:
 
@@ -131,7 +131,7 @@ This branch and CI do not create a database on the user's Windows/Docker host, d
 The repository includes `docker-compose.naris.yml`. It creates a separate PostgreSQL 17 container, named volume, isolated bridge network, bootstrap-only database admin, least-privilege runtime role, API, and Nginx frontend. It does not join or modify the existing marketing or Evolution PostgreSQL containers. PostgreSQL has no published host port; only the web UI is published on port 8081 by default.
 
 1. Copy `.env.naris.example` to `.env.naris` and edit it locally. Set two different long hexadecimal passwords: `NARIS_DB_ADMIN_PASSWORD` for the bootstrap-only superuser and `NARIS_DB_PASSWORD` for the least-privilege runtime account. Do not commit or share this file. Add the final public website origin to `APP_ALLOWED_ORIGINS`.
-2. Keep `TASK_GENERATION_ENABLED=false` during initial provisioning and import.
+2. Keep `TASK_GENERATION_ENABLED=false` during initial provisioning and import. The example file defaults to `true` for normal operations, so explicitly set it to `false` before starting the API if the import is not complete.
 3. Put the decrypted Firestore REST backup folder at repository root as `naris_ops_firestore_backup`. Do not commit it.
 4. Start the isolated database and apply schema:
 

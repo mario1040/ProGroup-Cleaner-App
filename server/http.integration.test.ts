@@ -72,6 +72,52 @@ async function login(username: string, password: string): Promise<string> {
 }
 
 describe("PostgreSQL HTTP integration", () => {
+  it("serves JSON health probes to trusted AI Studio previews without widening API CORS", async () => {
+    const previewOrigin = "https://ais-dev-test-123.europe-west2.run.app";
+    const liveResponse = await fetch(baseUrl + "/health/live", {
+      headers: { Origin: previewOrigin },
+    });
+    const livePayload = await liveResponse.json();
+    expect(liveResponse.status).toBe(200);
+    expect(liveResponse.headers.get("access-control-allow-origin")).toBe(previewOrigin);
+    expect(livePayload).toMatchObject({ ok: true, status: "ok", service: "naris-api" });
+
+    const dbResponse = await fetch(baseUrl + "/health/db", {
+      headers: { Origin: previewOrigin },
+    });
+    const dbPayload = await dbResponse.json();
+    expect(dbResponse.status).toBe(200);
+    expect(dbPayload).toMatchObject({ ok: true, database: "connected", query: true });
+
+    const readyResponse = await fetch(baseUrl + "/health/ready", {
+      headers: { Origin: previewOrigin },
+    });
+    const readyPayload = await readyResponse.json();
+    expect(readyResponse.status).toBe(200);
+    expect(readyPayload).toMatchObject({
+      ok: true,
+      status: "ready",
+      database: "connected",
+      checks: { connection: true, query: true, requiredTables: true },
+      missingTables: [],
+    });
+
+    const preflight = await fetch(baseUrl + "/health/ready", {
+      method: "OPTIONS",
+      headers: {
+        Origin: previewOrigin,
+        "Access-Control-Request-Method": "GET",
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(previewOrigin);
+
+    const protectedApi = await fetch(baseUrl + "/api/users", {
+      headers: { Origin: previewOrigin },
+    });
+    expect(protectedApi.status).toBe(403);
+  });
+
   beforeAll(async () => {
     await pool.query(
       "INSERT INTO locations (id, name, raw_data) VALUES ($1, 'Integration test location', $2::jsonb)",
@@ -242,6 +288,22 @@ describe("PostgreSQL HTTP integration", () => {
     expect(templateDeleted.response.status).toBe(200);
     createdTemplateIds.pop();
 
+    // Simulate a Firestore-imported SOP whose source JSON omitted normalized fields.
+    // The generator and admin API must rely on the canonical PostgreSQL columns.
+    await pool.query(
+      "UPDATE sop_items SET raw_data = raw_data - ARRAY[" +
+        "'id','title','zone_id','task_code','frequency','recurrence_days'," +
+        "'scheduled_time','scheduled_times','default_assignee_id','is_active'" +
+      "]::text[] WHERE id = $1",
+      [sop.payload.data.id],
+    );
+    const listedSops = await api("/api/sop-items", "GET", undefined, supervisorCookie);
+    expect(listedSops.response.status).toBe(200);
+    const listedSop = listedSops.payload.data.find((item: any) => item.id === sop.payload.data.id);
+    expect(listedSop.title).toBe("Integration SOP");
+    expect(listedSop.zone_id).toBe(zoneId);
+    expect(listedSop.frequency).toBe("يومي");
+
     const generated = await generateRecurringTasksForDate(pool, "2099-05-03");
     expect(generated.generated).toBe(1);
     const repeated = await generateRecurringTasksForDate(pool, "2099-05-03");
@@ -250,12 +312,14 @@ describe("PostgreSQL HTTP integration", () => {
     const generatedTaskId = "ti_rec_" + sop.payload.data.id + "_2099-05-03_0";
     createdTaskIds.push(generatedTaskId);
     const generatedRow = await pool.query(
-      "SELECT id, assigned_to, due_date, task_type FROM task_instances WHERE id = $1",
+      "SELECT id, assigned_to, due_date, task_type, title, sop_item_id FROM task_instances WHERE id = $1",
       [generatedTaskId],
     );
     expect(generatedRow.rowCount).toBe(1);
     expect(generatedRow.rows[0].assigned_to).toBe(cleanerId);
     expect(generatedRow.rows[0].task_type).toBe("recurring");
+    expect(generatedRow.rows[0].title).toBe("Integration SOP");
+    expect(generatedRow.rows[0].sop_item_id).toBe(sop.payload.data.id);
 
     const sopUpdated = await api("/api/sop-items/" + sop.payload.data.id, "PATCH", {
       title: "Integration SOP updated",

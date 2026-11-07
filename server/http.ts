@@ -1588,8 +1588,28 @@ app.delete("/api/sop-items/:id", requireAuth, allowRoles("admin", "supervisor"),
 }));
 
 app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
-  const result = await pool.query("SELECT id, raw_data FROM sop_items ORDER BY id");
-  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+  const result = await pool.query(
+    "SELECT id, title, zone_id, task_code, frequency, recurrence_days, scheduled_time, " +
+      "scheduled_times, default_assignee_id, is_active, created_at, updated_at, raw_data " +
+      "FROM sop_items ORDER BY id",
+  );
+  res.json({
+    data: result.rows.map((row) => ({
+      ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+      id: row.id,
+      title: row.title,
+      zone_id: row.zone_id,
+      task_code: row.task_code,
+      frequency: row.frequency,
+      recurrence_days: row.recurrence_days,
+      scheduled_time: row.scheduled_time,
+      scheduled_times: row.scheduled_times,
+      default_assignee_id: row.default_assignee_id,
+      is_active: row.is_active,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    })),
+  });
 }));
 
 app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {

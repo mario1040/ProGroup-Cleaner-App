@@ -1044,15 +1044,8 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
       value
     }));
     
-    if (data.length === 0) {
-      // Elegant default data to look spectacular on empty initial states
-      return [
-        { name: "أحمد علي", value: 4 },
-        { name: "محمد حسن", value: 3 },
-        { name: "محمود سيد", value: 5 },
-        { name: "سالم العتيبي", value: 2 }
-      ];
-    }
+    // Reports must never fabricate employee activity when the selected
+    // period has no completed tasks. An empty result should render as empty.
     return data;
   };
 

@@ -67,7 +67,7 @@ import {
 } from "../lib/api-postgres";
 import { Profile, Zone, TaskTemplate, TaskInstance, OperationalTask, DeviceSwitch } from "../types";
 import InventoryManager from "./InventoryManager";
-import { imageUrlToDataUrl } from "../lib/cloudinary";
+import { imageUrlToDataUrl, uploadZoneImageToCloudinary } from "../lib/cloudinary";
 import { sanitizeCssColors } from "../lib/colorUtils";
 import { getTaskStatusLabel, getTaskApprovalLabel } from "../lib/task-status";
 
@@ -694,8 +694,8 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
       const compressed = await compressImage(base64String, 1000, 1000, 0.7);
 
       // Upload photo
-      const storagePath = `zones/${zoneId}/cover_${Date.now()}.jpg`;
-      const uploadedUrl = await uploadPhoto(compressed, storagePath);
+      const uploaded = await uploadZoneImageToCloudinary(compressed, zoneId);
+      const uploadedUrl = uploaded.secure_url;
 
       // Save updated Zone cover image URL in database
       await saveZone({

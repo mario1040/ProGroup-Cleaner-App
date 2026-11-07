@@ -1696,6 +1696,34 @@ app.post("/api/media/upload-signature", requireAuth, asyncRoute(async (req, res)
   res.json({ cloud_name: cloudName, api_key: apiKey, timestamp, signature, folder, tags, side });
 }));
 
+app.post("/api/media/zone-upload-signature", requireAuth, asyncRoute(async (req, res) => {
+  const zoneId = typeof req.body?.zone_id === "string" ? req.body.zone_id.trim() : "";
+  if (!zoneId || zoneId.length > 200) {
+    res.status(400).json({ error: "A valid zone_id is required" }); return;
+  }
+  if (req.auth?.role !== "admin" && req.auth?.role !== "supervisor") {
+    res.status(403).json({ error: "Only admins and supervisors can upload zone images" }); return;
+  }
+  const zoneResult = await pool.query("SELECT id FROM zones WHERE id = $1", [zoneId]);
+  if (zoneResult.rowCount !== 1) {
+    res.status(404).json({ error: "Zone not found" }); return;
+  }
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "";
+  const apiKey = process.env.CLOUDINARY_API_KEY || "";
+  const apiSecret = process.env.CLOUDINARY_API_SECRET || "";
+  if (!cloudName || !apiKey || !apiSecret) {
+    res.status(503).json({ error: "Cloudinary server-side upload signing is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET on the API container." }); return;
+  }
+  const folder = "zones/" + zoneId;
+  const tags = "naris-ops,production,zone-cover";
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = createHash("sha1")
+    .update("folder=" + folder + "&tags=" + tags + "&timestamp=" + timestamp + apiSecret, "utf8")
+    .digest("hex");
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ cloud_name: cloudName, api_key: apiKey, timestamp, signature, folder, tags });
+}));
+
 app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {
   const publicId = typeof req.body?.public_id === "string" ? req.body.public_id.trim() : "";
   const taskId = typeof req.body?.task_id === "string" ? req.body.task_id.trim() : "";

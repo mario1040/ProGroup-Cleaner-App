@@ -144,7 +144,8 @@ async function main(): Promise<void> {
         " GROUP BY to_char(substring(d.data->>'due_date' from '^[0-9]{4}-[0-9]{2}-[0-9]{2}')::date, 'YYYY-MM')" +
         "), normalized_imported_monthly AS (" +
         " SELECT to_char(date_trunc('month', t.due_date), 'YYYY-MM') AS month, COUNT(*)::int AS total " +
-        " FROM task_instances t JOIN firestore_documents d ON d.collection_name = 'task_instances' AND d.document_id = t.id " +\n        " AND d.data->>'due_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' " +
+        " FROM task_instances t JOIN firestore_documents d ON d.collection_name = 'task_instances' AND d.document_id = t.id " +
+        " AND d.data->>'due_date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' " +
         " GROUP BY date_trunc('month', t.due_date)" +
         ") SELECT COALESCE(s.month, n.month) AS month, COALESCE(s.total,0)::int AS source_total, " +
         "COALESCE(n.total,0)::int AS normalized_imported_total " +
@@ -200,7 +201,8 @@ async function main(): Promise<void> {
       archiveCoverage: archiveCoverage.rows[0],
       monthlyArchive: monthlyArchive.rows,
       taskSourceParity: sourceParity.rows[0],
-      monthlyTaskSourceParityMismatches: monthlySourceParity.rows,\n      postImportTasksByMonth: postImportTasksByMonth.rows,
+      monthlyTaskSourceParityMismatches: monthlySourceParity.rows,
+      postImportTasksByMonth: postImportTasksByMonth.rows,
       historicalKpiSnapshotCoverage: snapshotCoverage.rows[0],
       kpiSnapshotsByPeriod: snapshotsByPeriod.rows,
       taskMediaIntegrity: mediaIntegrity.rows[0],

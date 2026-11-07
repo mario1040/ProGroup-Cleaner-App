@@ -196,6 +196,32 @@ describe("PostgreSQL HTTP integration", () => {
     expect(cleanerTasks.response.status).toBe(200);
     expect(cleanerTasks.payload.data.some((task: any) => task.id === taskId)).toBe(true);
 
+    const cleanerZoneSignature = await api("/api/media/zone-upload-signature", "POST", {
+      zone_id: zoneId,
+    }, cleanerCookie);
+    expect(cleanerZoneSignature.response.status).toBe(403);
+
+    const missingZoneSignature = await api("/api/media/zone-upload-signature", "POST", {
+      zone_id: "missing_zone_" + suffix,
+    }, adminCookie);
+    expect(missingZoneSignature.response.status).toBe(404);
+
+    const adminZoneSignature = await api("/api/media/zone-upload-signature", "POST", {
+      zone_id: zoneId,
+    }, adminCookie);
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      expect(adminZoneSignature.response.status).toBe(200);
+      expect(adminZoneSignature.payload).toMatchObject({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        folder: "zones/" + zoneId,
+        tags: "naris-ops,production,zone-cover",
+      });
+      expect(adminZoneSignature.payload.signature).toMatch(/^[a-f0-9]{40}$/);
+    } else {
+      expect(adminZoneSignature.response.status).toBe(503);
+    }
+
     const missingTaskSignature = await api("/api/media/upload-signature", "POST", {
       task_id: "missing_task_" + suffix,
       side: "before",

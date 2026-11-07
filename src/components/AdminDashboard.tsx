@@ -2433,13 +2433,20 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                               </td>
                               <td className="p-3 font-bold text-slate-700">{task.due_time || "17:00"}</td>
                               <td className="p-3">
-                                <span className={`text-[10px] font-bold py-0.5 px-2 rounded-full border inline-block ${
-                                  task.status === "completed" ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
-                                  task.status === "in_progress" ? "bg-amber-100 text-amber-800 border-amber-200" :
-                                  task.status === "rejected" ? "bg-red-100 text-red-800 border-red-200" : "bg-gray-100 text-gray-600 border-gray-200"
-                                }`}>
-                                  {getTaskStatusLabel(task.status, { taskType: task.task_type })}
-                                </span>
+                                <div className="flex flex-col items-start gap-1">
+                                  <span className={`text-[10px] font-bold py-0.5 px-2 rounded-full border inline-block ${
+                                    task.status === "completed" ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
+                                    task.status === "in_progress" ? "bg-amber-100 text-amber-800 border-amber-200" :
+                                    task.status === "rejected" ? "bg-red-100 text-red-800 border-red-200" : "bg-gray-100 text-gray-600 border-gray-200"
+                                  }`}>
+                                    {getTaskStatusLabel(task.status, { taskType: task.task_type })}
+                                  </span>
+                                  {task.status === "completed" && (
+                                    <span className="text-[9px] font-semibold text-slate-500">
+                                      {getTaskApprovalLabel(task.supervisor_approved)}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="p-3">
                                 <div className="flex gap-1.5">

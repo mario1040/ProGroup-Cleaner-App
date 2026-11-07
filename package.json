@@ -13,7 +13,8 @@
     "data:import-firestore": "tsx server/import-firestore-backup.ts",
     "media:migrate-cloudinary": "tsx server/migrate-base64-photos-to-cloudinary.ts",
     "start:api": "tsx server/http.ts",
-    "db:migrate": "tsx server/db/migrate.ts"
+    "db:migrate": "tsx server/db/migrate.ts",
+    "db:diagnostics": "tsx server/db/diagnostics.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

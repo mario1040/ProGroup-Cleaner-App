@@ -153,8 +153,8 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
   // Monthly Reports & Archive States
   const [reportEmployeeId, setReportEmployeeId] = useState<string>("all");
   const [reportStartDate, setReportStartDate] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    const today = getLocalDateString();
+    return `${today.slice(0, 7)}-01`;
   });
   const [reportEndDate, setReportEndDate] = useState<string>(getLocalDateString());
   const [historicalTasks, setHistoricalTasks] = useState<(TaskInstance & { zone?: Zone; assignee?: Profile; template?: TaskTemplate })[]>([]);
@@ -866,15 +866,22 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
     try {
       setLoadingHistorical(true);
       setHasSearched(true);
+      // Clear the previous result immediately so a failed/new query can never
+      // leave an older period displayed under the newly selected date filters.
+      setHistoricalTasks([]);
       const allRangeTasks = await getTasksForRange(reportStartDate, reportEndDate);
       const filtered = reportEmployeeId === "all"
         ? allRangeTasks
         : allRangeTasks.filter(t => t.assigned_to === reportEmployeeId);
       setHistoricalTasks(filtered.map(normalizeTaskPhotoUrls));
       showToast(`تم استرجاع عدد ${filtered.length} مهمة بنجاح`, "success");
-    } catch (err: any) {
-      console.error(err);
-      showToast("خطأ أثناء استرجاع بيانات الأرشيف", "error");
+    } catch (err: unknown) {
+      console.error("[Monthly reports] Archive retrieval failed:", err);
+      setHistoricalTasks([]);
+      showToast(
+        err instanceof Error ? err.message : "حدث خطأ أثناء استرجاع بيانات الأرشيف",
+        "error",
+      );
     } finally {
       setLoadingHistorical(false);
     }
@@ -1044,15 +1051,8 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
       value
     }));
     
-    if (data.length === 0) {
-      // Elegant default data to look spectacular on empty initial states
-      return [
-        { name: "أحمد علي", value: 4 },
-        { name: "محمد حسن", value: 3 },
-        { name: "محمود سيد", value: 5 },
-        { name: "سالم العتيبي", value: 2 }
-      ];
-    }
+    // Reports must never fabricate employee activity when the selected
+    // period has no completed tasks. An empty result should render as empty.
     return data;
   };
 
@@ -3592,10 +3592,9 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                         <button
                           type="button"
                           onClick={() => {
-                            const d = new Date();
-                            const firstDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-                            setReportStartDate(firstDay);
-                            setReportEndDate(getLocalDateString());
+                            const today = getLocalDateString();
+                            setReportStartDate(`${today.slice(0, 7)}-01`);
+                            setReportEndDate(today);
                             setReportEmployeeId("all");
                           }}
                           className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold px-3 py-2.5 rounded-xl text-xs transition"
@@ -3623,10 +3622,11 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       <button
                         type="button"
                         onClick={() => {
-                          const d = new Date();
-                          const lastWeek = new Date(d.getTime() - 7 * 24 * 60 * 60 * 1000);
-                          setReportStartDate(lastWeek.toISOString().split("T")[0]);
-                          setReportEndDate(getLocalDateString());
+                          const today = getLocalDateString();
+                          const lastWeek = new Date(today + "T00:00:00.000Z");
+                          lastWeek.setUTCDate(lastWeek.getUTCDate() - 7);
+                          setReportStartDate(lastWeek.toISOString().slice(0, 10));
+                          setReportEndDate(today);
                         }}
                         className="text-[10px] bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 font-bold px-2.5 py-1 rounded-lg transition"
                       >
@@ -3635,10 +3635,9 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       <button
                         type="button"
                         onClick={() => {
-                          const d = new Date();
-                          const firstDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-                          setReportStartDate(firstDay);
-                          setReportEndDate(getLocalDateString());
+                          const today = getLocalDateString();
+                          setReportStartDate(`${today.slice(0, 7)}-01`);
+                          setReportEndDate(today);
                         }}
                         className="text-[10px] bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 font-bold px-2.5 py-1 rounded-lg transition"
                       >

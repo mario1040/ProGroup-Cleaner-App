@@ -58,6 +58,11 @@ async function main(): Promise<void> {
       can_truncate_users: boolean;
       can_use_generation_sequence: boolean;
       owned_public_objects: string;
+      privileged_memberships: string;
+      is_superuser: boolean;
+      can_create_roles: boolean;
+      can_replicate: boolean;
+      can_bypass_rls: boolean;
     }>(
       "SELECT " +
         "has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_schema, " +
@@ -68,15 +73,25 @@ async function main(): Promise<void> {
         "has_table_privilege(current_user, 'public.users', 'DELETE') AS can_delete_users, " +
         "has_table_privilege(current_user, 'public.users', 'TRUNCATE') AS can_truncate_users, " +
         "has_sequence_privilege(current_user, 'public.task_generation_runs_id_seq', 'USAGE') AS can_use_generation_sequence, " +
+        "r.rolsuper AS is_superuser, r.rolcreaterole AS can_create_roles, " +
+        "r.rolreplication AS can_replicate, r.rolbypassrls AS can_bypass_rls, " +
+        "(SELECT COUNT(*)::text FROM pg_auth_members m JOIN pg_roles member ON member.oid = m.member " +
+        " WHERE member.rolname = current_user) AS privileged_memberships, " +
         "(SELECT COUNT(*)::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
         " WHERE n.nspname = 'public' AND c.relkind IN ('r', 'S') " +
-        " AND pg_get_userbyid(c.relowner) = current_user) AS owned_public_objects",
+        " AND pg_get_userbyid(c.relowner) = current_user) AS owned_public_objects " +
+        "FROM pg_roles r WHERE r.rolname = current_user",
     );
     const p = privileges.rows[0];
     if (
       p.can_create_schema ||
       p.can_create_database ||
       p.can_truncate_users ||
+      p.is_superuser ||
+      p.can_create_roles ||
+      p.can_replicate ||
+      p.can_bypass_rls ||
+      Number(p.privileged_memberships) > 0 ||
       !p.can_select_users ||
       !p.can_insert_users ||
       !p.can_update_users ||

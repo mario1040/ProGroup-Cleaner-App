@@ -798,7 +798,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
         } catch (repairError: any) {
           console.error("Pending-task reassignment failed after deactivation:", repairError);
           showToast(
-            `تم تعطيل حساب ${p.full_name}، لكن فشلت إعادة إسناد المهام المعلقة. راجع لوحة المهام فوراً.`,
+            `تم تعطيل حساب ${p.full_name}، لكن فشلت إعادة إسناد المهام بانتظار البدء. راجع لوحة المهام فوراً.`,
             "warning"
           );
         }
@@ -1064,7 +1064,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
     const data = [
       { name: "مكتملة", value: completed, color: "#10b981" }, // emerald-500
       { name: "متأخرة", value: late, color: "#f43f5e" }, // rose-500
-      { name: "قيد التنفيذ/معلقة", value: pending, color: "#f59e0b" }, // amber-500
+      { name: "قيد التنفيذ أو بانتظار البدء", value: pending, color: "#f59e0b" }, // amber-500
     ].filter(item => item.value > 0);
     
     // Add dummy data if empty so the chart looks good
@@ -1907,7 +1907,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                       </div>
                       <span className="text-[10px] text-slate-500 flex items-center gap-3">
                         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></span> جاهزة بالكامل</span>
-                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-400 rounded-full"></span> قيد العمل</span>
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-400 rounded-full"></span> قيد التنفيذ</span>
                         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full"></span> متأخرة/معطلة</span>
                       </span>
                     </div>
@@ -3729,7 +3729,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                           </span>
                         </div>
                         <div className="bg-amber-50/40 border border-amber-100 p-3.5 rounded-xl text-right">
-                          <span className="text-[10px] text-slate-400 block font-bold">قيد التنفيذ والانتظار</span>
+                          <span className="text-[10px] text-slate-400 block font-bold">قيد التنفيذ أو بانتظار البدء</span>
                           <span className="text-xl font-black text-amber-700 font-mono">
                             { (hasSearched ? historicalTasks : tasks).filter(t => t.status === "pending" || t.status === "in_progress").length }
                           </span>
@@ -4659,7 +4659,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                         task.status === "completed" ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
                         task.status === "in_progress" ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-gray-100 text-gray-500 border-gray-200"
                       }`}>
-                        {task.status === "completed" ? "مكتمل" : task.status === "in_progress" ? "قيد العمل" : "معلق"}
+                        {getTaskStatusLabel(task.status, { taskType: task.task_type })}
                       </span>
                     </div>
                   ))

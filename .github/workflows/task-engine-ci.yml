@@ -19,6 +19,8 @@ on:
     branches: [feat/postgres-task-engine]
     paths:
       - "server/**"
+      - "db/**"
+      - "docker-compose.naris.yml"
       - "package.json"
       - "tsconfig.json"
       - ".github/workflows/task-engine-ci.yml"
@@ -57,14 +59,17 @@ jobs:
             -v "$PWD/db/init-app-role.sql:/bootstrap/init-app-role.sql:ro" \
             -e PGPASSWORD=ci-only-password postgres:17-alpine sh -ec '
               psql -h 127.0.0.1 -U naris_test -d naris_ops -v ON_ERROR_STOP=1 \
+                -v admin_user=naris_test \
                 -v app_user=naris_app_ci \
                 -v app_password=ci_app_password_hex_0123456789abcdef \
                 -f /bootstrap/init-app-role.sql
             '
-          echo "DATABASE_URL=postgresql://naris_app_ci:ci_app_password_hex_0123456789abcdef@localhost:5432/naris_ops" >> "$GITHUB_ENV"
+          echo "APP_DATABASE_URL=postgresql://naris_app_ci:ci_app_password_hex_0123456789abcdef@localhost:5432/naris_ops" >> "$GITHUB_ENV"
       - name: Apply PostgreSQL migration
         run: npx tsx server/db/migrate.ts
-      - name: Verify PostgreSQL schema
+      - name: Switch to least-privilege application role
+        run: echo "DATABASE_URL=$APP_DATABASE_URL" >> "$GITHUB_ENV"
+      - name: Verify PostgreSQL schema and runtime permissions
         run: npx tsx server/db/schema-smoke.ts
       - name: Run task-engine tests
         run: npx vitest run server

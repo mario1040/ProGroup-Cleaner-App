@@ -69,6 +69,10 @@ describe("recurrence compatibility", () => {
     expect(getSopOccurrencesForDate(anchored, "2026-11-05")).toHaveLength(0);
   });
 
+  it("does not invent an every-other-day anchor when the source date is missing", () => {
+    expect(getSopOccurrencesForDate(sop({ frequency: "يوم ويوم" }), date)).toHaveLength(0);
+  });
+
   it("does not generate inactive or unsupported frequencies", () => {
     expect(getSopOccurrencesForDate(sop({ is_active: false }), date)).toHaveLength(0);
     expect(getSopOccurrencesForDate(sop({ frequency: "شهري" }), date)).toHaveLength(0);

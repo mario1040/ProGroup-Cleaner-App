@@ -195,8 +195,8 @@ export default function TodayTasksPage({
     }
   };
 
-  const getStatusLabel = (status: string, taskType?: string, supervisorApproved?: boolean) =>
-    getTaskStatusLabel(status, { taskType, supervisorApproved });
+  const getStatusLabel = (status: string, taskType?: string) =>
+    getTaskStatusLabel(status, { taskType });
 
   // Start executing task
   const handleStartTask = async () => {
@@ -571,7 +571,7 @@ export default function TodayTasksPage({
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={`text-[10px] font-bold py-0.5 px-2 rounded-full border ${getStatusColor(task.status, task.task_type)}`}>
-                      {getStatusLabel(task.status, task.task_type, task.supervisor_approved)}
+                      {getStatusLabel(task.status, task.task_type)}
                     </span>
                     <span className="text-xs font-bold text-slate-400">
                       {task.task_code || "ONE_TIME"}
@@ -670,7 +670,7 @@ export default function TodayTasksPage({
                   <div className="flex justify-between items-start gap-2">
                     <div>
                       <span className={`text-[10px] font-bold py-0.5 px-2.5 rounded-full border inline-block mb-1.5 ${getStatusColor(selectedTask.status, selectedTask.task_type)}`}>
-                        {getStatusLabel(selectedTask.status, selectedTask.task_type, selectedTask.supervisor_approved)}
+                        {getStatusLabel(selectedTask.status, selectedTask.task_type)}
                       </span>
                       <h2 className="text-base font-bold text-slate-800 leading-snug">
                         {selectedTask.title}

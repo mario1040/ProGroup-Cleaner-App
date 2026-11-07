@@ -1,3 +1,5 @@
+import { API_BASE_URL } from "./api-config";
+
 // src/lib/cloudinary.ts
 // Cloudinary upload client for task and reference media.
 
@@ -36,9 +38,41 @@ function base64ToBlob(base64: string, defaultMime = "image/jpeg"): Blob {
   }
 }
 
+export interface TaskPhotoUploadContext {
+  taskId: string;
+  side: "before" | "after";
+}
+
+interface SignedUploadConfig {
+  cloud_name: string;
+  api_key: string;
+  timestamp: string;
+  signature: string;
+  folder: string;
+  tags: string;
+}
+
+async function getTaskPhotoUploadSignature(context: TaskPhotoUploadContext): Promise<SignedUploadConfig> {
+  const response = await fetch(API_BASE_URL + "/api/media/upload-signature", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: context.taskId, side: context.side }),
+  });
+  const payload = await response.json().catch(() => ({})) as SignedUploadConfig & { error?: string };
+  if (!response.ok) {
+    throw new Error(payload.error || "تعذر تجهيز رفع الصورة الآمن من الخادم.");
+  }
+  if (!payload.cloud_name || !payload.api_key || !payload.timestamp || !payload.signature || !payload.folder || !payload.tags) {
+    throw new Error("استجابة توقيع رفع الصورة غير مكتملة.");
+  }
+  return payload;
+}
+
 export async function uploadToCloudinary(
   blobOrBase64: Blob | string,
-  folder: string = "naris_ops"
+  folder: string = "naris_ops",
+  taskContext?: TaskPhotoUploadContext
 ): Promise<CloudinaryUploadResult> {
   let file: File | Blob;
 
@@ -48,16 +82,29 @@ export async function uploadToCloudinary(
     file = blobOrBase64;
   }
 
-  assertCloudinaryConfiguration();
-
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-  formData.append("folder", folder);
-  formData.append("tags", "naris-ops,production");
+
+  let cloudName = CLOUDINARY_CLOUD_NAME;
+  if (taskContext) {
+    // Cleaner evidence uses a short-lived server signature. No unsigned preset or
+    // Cloudinary secret is exposed in the cleaner's browser bundle.
+    const signed = await getTaskPhotoUploadSignature(taskContext);
+    cloudName = signed.cloud_name;
+    formData.append("api_key", signed.api_key);
+    formData.append("timestamp", signed.timestamp);
+    formData.append("signature", signed.signature);
+    formData.append("folder", signed.folder);
+    formData.append("tags", signed.tags);
+  } else {
+    assertCloudinaryConfiguration();
+    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+    formData.append("folder", folder);
+    formData.append("tags", "naris-ops,production");
+  }
 
   const response = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
     {
       method: "POST",
       body: formData,

@@ -16,7 +16,9 @@ function getBusinessDate(): string {
 }
 
 async function main(): Promise<void> {
-  const date = process.argv[2] || getBusinessDate();
+  const args = process.argv.slice(2);
+  const dryRun = args.includes("--dry-run");
+  const date = args.find((arg) => /^\\d{4}-\\d{2}-\\d{2}$/.test(arg)) || getBusinessDate();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw new Error("Date must use YYYY-MM-DD format.");
   }
@@ -24,7 +26,7 @@ async function main(): Promise<void> {
   const connectionString = assertNarisDatabaseUrl(process.env.DATABASE_URL);
   const pool = new Pool({ connectionString });
   try {
-    const summary = await generateRecurringTasksForDate(pool, date);
+    const summary = await generateRecurringTasksForDate(pool, date, new Date(), dryRun);
     process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
   } finally {
     await pool.end();

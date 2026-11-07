@@ -1,11 +1,10 @@
 export interface TaskStatusLabelOptions {
   taskType?: string | null;
-  supervisorApproved?: boolean | null;
 }
 
 /**
  * Single Arabic wording source for task statuses across desktop and mobile.
- * Completion and supervisor approval are deliberately represented separately.
+ * Supervisor approval is a separate state and must not be conflated with completion.
  */
 export function getTaskStatusLabel(
   status: string,
@@ -21,9 +20,7 @@ export function getTaskStatusLabel(
     case "in_progress":
       return "قيد التنفيذ";
     case "completed":
-      return options.supervisorApproved === true
-        ? "مكتملة ومعتمدة"
-        : "مكتملة – بانتظار اعتماد المشرف";
+      return "مكتملة";
     case "rejected":
       return "مرفوضة – بحاجة لإعادة التنفيذ";
     case "late":
@@ -33,4 +30,8 @@ export function getTaskStatusLabel(
     default:
       return "حالة غير معروفة";
   }
+}
+
+export function getTaskApprovalLabel(supervisorApproved?: boolean | null): string {
+  return supervisorApproved === true ? "معتمدة من المشرف" : "بانتظار اعتماد المشرف";
 }

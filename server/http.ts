@@ -123,9 +123,36 @@ function allowRoles(...roles: Role[]) {
     next();
   };
 }
+function isHealthProbePath(pathname: string): boolean {
+  return /^\/health\/(live|db|ready)$/.test(pathname);
+}
+
+function isTrustedPreviewOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "https:" || parsed.origin !== origin) return false;
+    const host = parsed.hostname.toLowerCase();
+    return host.endsWith(".run.app") ||
+      host.endsWith(".googleusercontent.com") ||
+      host === "aistudio.google.com" ||
+      host.endsWith(".aistudio.google.com");
+  } catch {
+    return false;
+  }
+}
+
 function requireSameOrigin(req: Request, res: Response, next: NextFunction): void {
   const origin = req.get("origin");
   const isStateChanging = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+  const publicHealthRead = isHealthProbePath(req.path) &&
+    ["GET", "HEAD"].includes(req.method) &&
+    (!origin || allowedOrigins.has(origin) || isTrustedPreviewOrigin(origin));
+
+  if (publicHealthRead) {
+    next();
+    return;
+  }
+
   // Browser state-changing requests always carry Origin. In production, reject
   // origin-less writes so an attacker cannot bypass the allowlist via CSRF.
   if (isStateChanging && process.env.NODE_ENV === "production" && !origin) {
@@ -205,14 +232,34 @@ app.use((_req, res, next) => {
 });
 app.use((req, res, next) => {
   const origin = req.get("origin");
-  if (origin && allowedOrigins.has(origin)) {
+  const healthProbe = isHealthProbePath(req.path);
+  const originAllowed = Boolean(origin && (
+    allowedOrigins.has(origin) ||
+    (healthProbe && isTrustedPreviewOrigin(origin))
+  ));
+
+  if (origin && originAllowed) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
+    // Preview health probes are public and must not receive credential access.
+    if (allowedOrigins.has(origin)) {
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Requested-With");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      allowedOrigins.has(origin) ? "GET, POST, PATCH, DELETE, OPTIONS" : "GET, HEAD, OPTIONS",
+    );
   }
-  if (req.method === "OPTIONS") { res.sendStatus(204); return; }
+
+  if (req.method === "OPTIONS") {
+    if (origin && !originAllowed) {
+      res.status(403).json({ error: "Origin not allowed" });
+      return;
+    }
+    res.sendStatus(204);
+    return;
+  }
   next();
 });
 app.use(express.json({ limit: "2mb", strict: true }));
@@ -283,33 +330,91 @@ app.get("/api/auth/me", requireAuth, (req: AuthRequest, res) => {
   res.json({ user: req.auth });
 });
 
-app.get("/health/live", (_req, res) => res.json({ status: "ok" }));
-app.get("/health/ready", asyncRoute(async (_req, res) => {
-  const result = await pool.query<{ missing: string[] }>(
-    "SELECT ARRAY_REMOVE(ARRAY[" +
-      "CASE WHEN to_regclass('public.users') IS NULL THEN 'users' END, " +
-      "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
-      "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
-      "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
-      "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
-      "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
-      "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
-      "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
-      "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
-      "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
-      "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
-      "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +
-      "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END, " +
-      "CASE WHEN to_regclass('public.inventory_items') IS NULL THEN 'inventory_items' END" +
-    "], NULL) AS missing",
-  );
-  const missing = result.rows[0]?.missing || [];
-  if (missing.length > 0) {
-    res.status(503).json({ status: "not_ready", database: "connected", missing });
-    return;
+app.get("/health/live", (_req, res) => {
+  res.json({
+    ok: true,
+    status: "ok",
+    service: "naris-api",
+    checkedAt: new Date().toISOString(),
+  });
+});
+
+app.get("/health/db", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({
+      ok: true,
+      database: "connected",
+      query: true,
+      checkedAt: new Date().toISOString(),
+    });
+  } catch {
+    res.status(503).json({
+      ok: false,
+      status: "not_ready",
+      database: "disconnected",
+      query: false,
+      error: "Database connection failed",
+      checkedAt: new Date().toISOString(),
+    });
   }
-  res.json({ status: "ready", database: "connected", schema: "present" });
-}));
+});
+
+app.get("/health/ready", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    const result = await pool.query<{ missing: string[] }>(
+      "SELECT ARRAY_REMOVE(ARRAY[" +
+        "CASE WHEN to_regclass('public.users') IS NULL THEN 'users' END, " +
+        "CASE WHEN to_regclass('public.auth_sessions') IS NULL THEN 'auth_sessions' END, " +
+        "CASE WHEN to_regclass('public.zones') IS NULL THEN 'zones' END, " +
+        "CASE WHEN to_regclass('public.sop_items') IS NULL THEN 'sop_items' END, " +
+        "CASE WHEN to_regclass('public.task_templates') IS NULL THEN 'task_templates' END, " +
+        "CASE WHEN to_regclass('public.task_generation_runs') IS NULL THEN 'task_generation_runs' END, " +
+        "CASE WHEN to_regclass('public.task_instances') IS NULL THEN 'task_instances' END, " +
+        "CASE WHEN to_regclass('public.task_media') IS NULL THEN 'task_media' END, " +
+        "CASE WHEN to_regclass('public.locations') IS NULL THEN 'locations' END, " +
+        "CASE WHEN to_regclass('public.firestore_documents') IS NULL THEN 'firestore_documents' END, " +
+        "CASE WHEN to_regclass('public.operational_tasks') IS NULL THEN 'operational_tasks' END, " +
+        "CASE WHEN to_regclass('public.device_switches') IS NULL THEN 'device_switches' END, " +
+        "CASE WHEN to_regclass('public.kpi_snapshots') IS NULL THEN 'kpi_snapshots' END, " +
+        "CASE WHEN to_regclass('public.audit_logs') IS NULL THEN 'audit_logs' END, " +
+        "CASE WHEN to_regclass('public.inventory_items') IS NULL THEN 'inventory_items' END" +
+      "], NULL) AS missing",
+    );
+    const missingTables = result.rows[0]?.missing || [];
+    if (missingTables.length > 0) {
+      res.status(503).json({
+        ok: false,
+        status: "not_ready",
+        database: "connected",
+        checks: { connection: true, query: true, requiredTables: false },
+        missingTables,
+        checkedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      status: "ready",
+      database: "connected",
+      checks: { connection: true, query: true, requiredTables: true },
+      missingTables: [],
+      checkedAt: new Date().toISOString(),
+    });
+  } catch {
+    res.status(503).json({
+      ok: false,
+      status: "not_ready",
+      database: "disconnected",
+      checks: { connection: false, query: false, requiredTables: false },
+      missingTables: [],
+      error: "Database readiness check failed",
+      checkedAt: new Date().toISOString(),
+    });
+  }
+});
 
 app.get("/api/users", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
   const result = await pool.query(
@@ -1370,13 +1475,34 @@ app.patch("/api/sop-items/:id", requireAuth, allowRoles("admin", "supervisor"), 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const selected = await client.query("SELECT id, raw_data FROM sop_items WHERE id = $1 FOR UPDATE", [req.params.id]);
+    const selected = await client.query(
+      "SELECT id, title, zone_id, task_code, frequency, recurrence_days, scheduled_time, " +
+        "scheduled_times, default_assignee_id, is_active, created_at, updated_at, raw_data " +
+        "FROM sop_items WHERE id = $1 FOR UPDATE",
+      [req.params.id],
+    );
     if (selected.rowCount !== 1) {
       await client.query("ROLLBACK");
       res.status(404).json({ error: "SOP item not found" }); return;
     }
-    const current = selected.rows[0].raw_data && typeof selected.rows[0].raw_data === "object"
-      ? selected.rows[0].raw_data as Record<string, unknown> : {};
+    const selectedSop = selected.rows[0];
+    const raw = selectedSop.raw_data && typeof selectedSop.raw_data === "object" && !Array.isArray(selectedSop.raw_data)
+      ? selectedSop.raw_data as Record<string, unknown> : {};
+    const current: Record<string, unknown> = {
+      ...raw,
+      id: selectedSop.id,
+      title: selectedSop.title,
+      zone_id: selectedSop.zone_id,
+      task_code: selectedSop.task_code,
+      frequency: selectedSop.frequency,
+      recurrence_days: selectedSop.recurrence_days,
+      scheduled_time: selectedSop.scheduled_time,
+      scheduled_times: selectedSop.scheduled_times,
+      default_assignee_id: selectedSop.default_assignee_id,
+      is_active: selectedSop.is_active,
+      created_at: selectedSop.created_at,
+      updated_at: selectedSop.updated_at,
+    };
     const merged: Record<string, unknown> = { ...current, ...body, id: req.params.id, updated_at: new Date().toISOString() };
     if (typeof merged.title !== "string" || !merged.title.trim() ||
         typeof merged.zone_id !== "string" || typeof merged.frequency !== "string") {
@@ -1487,8 +1613,28 @@ app.delete("/api/sop-items/:id", requireAuth, allowRoles("admin", "supervisor"),
 }));
 
 app.get("/api/sop-items", requireAuth, allowRoles("admin", "supervisor"), asyncRoute(async (_req, res) => {
-  const result = await pool.query("SELECT id, raw_data FROM sop_items ORDER BY id");
-  res.json({ data: result.rows.map((row) => ({ ...row.raw_data, id: row.id })) });
+  const result = await pool.query(
+    "SELECT id, title, zone_id, task_code, frequency, recurrence_days, scheduled_time, " +
+      "scheduled_times, default_assignee_id, is_active, created_at, updated_at, raw_data " +
+      "FROM sop_items ORDER BY id",
+  );
+  res.json({
+    data: result.rows.map((row) => ({
+      ...(row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}),
+      id: row.id,
+      title: row.title,
+      zone_id: row.zone_id,
+      task_code: row.task_code,
+      frequency: row.frequency,
+      recurrence_days: row.recurrence_days,
+      scheduled_time: row.scheduled_time,
+      scheduled_times: row.scheduled_times,
+      default_assignee_id: row.default_assignee_id,
+      is_active: row.is_active,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    })),
+  });
 }));
 
 app.post("/api/media/delete", requireAuth, asyncRoute(async (req, res) => {

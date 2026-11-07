@@ -9,8 +9,7 @@ import type {
   Zone,
 } from "../types";
 import { uploadToCloudinary } from "./cloudinary";
-
-const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "https://naris-api.bezaverse.com").replace(/\/$/, "");
+import { API_BASE_URL } from "./api-config";
 
 type ApiEnvelope<T> = { data: T; meta?: Record<string, unknown> };
 
@@ -222,10 +221,11 @@ export async function getDeviceSwitches(): Promise<DeviceSwitch[]> {
 async function enrichTasks(tasks: TaskInstance[]): Promise<(TaskInstance & {
   zone?: Zone; assignee?: Profile; template?: TaskTemplate;
 })[]> {
-  const [zones, profiles, templates, currentUser] = await Promise.all([
+  const [zones, profiles, templates, sops, currentUser] = await Promise.all([
     getRawZones().catch(() => [] as Zone[]),
     getProfiles().catch(() => [] as Profile[]),
     getTemplates().catch(() => [] as TaskTemplate[]),
+    getSopItems().catch(() => [] as SOPItem[]),
     getCurrentUserProfile(),
   ]);
   const usableProfiles = profiles.length ? profiles : (currentUser ? [currentUser] : []);
@@ -233,7 +233,9 @@ async function enrichTasks(tasks: TaskInstance[]): Promise<(TaskInstance & {
     ...normalizeTaskPhotoUrls(task),
     zone: zones.find((zone) => zone.id === task.zone_id),
     assignee: usableProfiles.find((profile) => profile.id === task.assigned_to),
-    template: templates.find((template) => template.id === (task.sop_item_id || task.template_id)),
+    template: (task.sop_item_id
+      ? sops.find((sop) => sop.id === task.sop_item_id)
+      : undefined) || templates.find((template) => template.id === task.template_id),
   }));
 }
 
@@ -331,6 +333,22 @@ export async function saveTemplate(template: Partial<TaskTemplate>): Promise<Tas
 
 export async function deleteTemplate(id: string): Promise<void> {
   await apiRequest("/api/task-templates/" + encodeURIComponent(id), { method: "DELETE" });
+}
+
+export async function saveSopItem(item: Partial<SOPItem>): Promise<SOPItem> {
+  const path = item.id
+    ? "/api/sop-items/" + encodeURIComponent(item.id)
+    : "/api/sop-items";
+  const { id, ...payload } = item;
+  const result = await apiRequest<{ data: SOPItem }>(path, {
+    method: id ? "PATCH" : "POST",
+    body: jsonBody(payload),
+  });
+  return result.data;
+}
+
+export async function deleteSopItem(id: string): Promise<void> {
+  await apiRequest("/api/sop-items/" + encodeURIComponent(id), { method: "DELETE" });
 }
 
 export async function saveProfile(profile: Partial<Profile>): Promise<{ profile: Profile; generatedPassword?: string }> {

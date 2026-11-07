@@ -1,89 +1,114 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Activity, CheckCircle, AlertTriangle, RefreshCw, Database } from "lucide-react";
+import { API_BASE_URL } from "../lib/api-config";
 
 type HealthState = {
   live: "unknown" | "ok" | "error";
+  database: "unknown" | "connected" | "error";
   ready: "unknown" | "ready" | "not_ready" | "error";
   missing: string[];
   message?: string;
   checkedAt?: string;
 };
 
-// Vercel and other split-host deployments need an explicit API origin.
-// Docker/Nginx deployments can still override this with VITE_API_BASE_URL.
-const API_BASE_URL = String(
-  import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.PROD ? "https://naris-api.bezaverse.com" : "")
-).replace(/\/$/, "");
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 const HEALTH_REQUEST_OPTIONS: RequestInit = {
   cache: "no-store",
-  // Health endpoints are public; do not send session cookies cross-origin.
   credentials: "omit",
+  headers: { Accept: "application/json" },
 };
+
+async function readJson(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error("الخادم لم يُرجع JSON؛ تحقق من عنوان API وNginx/Preview.");
+  }
+  return response.json();
+}
 
 export default function ApiHealthPanel() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [health, setHealth] = useState<HealthState>({
-    live: "unknown", ready: "unknown", missing: [],
+    live: "unknown", database: "unknown", ready: "unknown", missing: [],
   });
 
   const checkHealth = useCallback(async () => {
     setLoading(true);
-    const baseUrl = API_BASE_URL;
     const errors: string[] = [];
 
     try {
-      // Check each endpoint independently. A failure in /health/live must not
-      // overwrite a successful /health/ready response (or vice versa).
-      const [liveResult, readyResult] = await Promise.allSettled([
-        fetch(baseUrl + "/health/live", HEALTH_REQUEST_OPTIONS),
-        fetch(baseUrl + "/health/ready", HEALTH_REQUEST_OPTIONS),
+      const [liveResult, dbResult, readyResult] = await Promise.allSettled([
+        fetch(API_BASE_URL + "/health/live", HEALTH_REQUEST_OPTIONS),
+        fetch(API_BASE_URL + "/health/db", HEALTH_REQUEST_OPTIONS),
+        fetch(API_BASE_URL + "/health/ready", HEALTH_REQUEST_OPTIONS),
       ]);
 
       let live: HealthState["live"] = "error";
+      let database: HealthState["database"] = "error";
       let ready: HealthState["ready"] = "error";
       let missing: string[] = [];
 
       if (liveResult.status === "fulfilled") {
-        live = liveResult.value.ok ? "ok" : "error";
-        if (!liveResult.value.ok) {
-          errors.push(`فحص API process رجع HTTP ${liveResult.value.status}`);
-        }
+        const response = liveResult.value;
+        const payload = await readJson(response).catch(() => null);
+        live = response.ok && isRecord(payload) && payload.ok === true && payload.status === "ok"
+          ? "ok" : "error";
+        if (live === "error") errors.push("فحص API process لم يُرجع عقد الاستجابة الصحيح.");
       } else {
-        errors.push(`فشل فحص API process: ${liveResult.reason instanceof Error ? liveResult.reason.message : String(liveResult.reason)}`);
+        errors.push("تعذر الوصول إلى API: " + String(liveResult.reason));
+      }
+
+      if (dbResult.status === "fulfilled") {
+        const response = dbResult.value;
+        const payload = await readJson(response).catch(() => null);
+        database = response.ok && isRecord(payload) && payload.ok === true && payload.database === "connected"
+          ? "connected" : "error";
+        if (database === "error") errors.push("فشل فحص اتصال PostgreSQL.");
+      } else {
+        errors.push("تعذر فحص اتصال PostgreSQL: " + String(dbResult.reason));
       }
 
       if (readyResult.status === "fulfilled") {
         const response = readyResult.value;
-        const payload = await response.json().catch(() => ({}));
-        missing = Array.isArray(payload?.missing) ? payload.missing : [];
+        const payload = await readJson(response).catch(() => null);
+        if (isRecord(payload) && Array.isArray(payload.missingTables)) {
+          missing = payload.missingTables.filter((item): item is string => typeof item === "string");
+        }
 
-        if (response.status === 503) {
-          ready = "not_ready";
-          errors.push("قاعدة البيانات متصلة لكن بعض جداول الـ schema غير جاهزة.");
-        } else if (response.ok && payload?.status === "ready" &&
-          payload?.database === "connected" && payload?.schema === "present") {
+        const checks = isRecord(payload) && isRecord(payload.checks) ? payload.checks : {};
+        if (response.ok && isRecord(payload) && payload.ok === true &&
+          payload.status === "ready" && payload.database === "connected" &&
+          checks.connection === true && checks.query === true && checks.requiredTables === true) {
           ready = "ready";
+        } else if (response.status === 503 && isRecord(payload) && payload.status === "not_ready") {
+          ready = "not_ready";
+          errors.push(missing.length
+            ? "جداول PostgreSQL المطلوبة غير موجودة: " + missing.join(", ")
+            : "قاعدة البيانات أو الـ schema غير جاهزين.");
         } else {
           ready = "error";
-          errors.push(payload?.error || `فحص Database schema رجع HTTP ${response.status} أو استجابة غير متوقعة.`);
+          errors.push(isRecord(payload) && typeof payload.error === "string"
+            ? payload.error
+            : "فحص Database schema أعاد استجابة غير متوافقة مع العقد المتوقع.");
         }
       } else {
-        errors.push(`فشل فحص Database schema: ${readyResult.reason instanceof Error ? readyResult.reason.message : String(readyResult.reason)}`);
+        errors.push("تعذر فحص Database schema: " + String(readyResult.reason));
       }
 
       setHealth({
-        live,
-        ready,
-        missing,
+        live, database, ready, missing,
         message: errors.length ? errors.join(" | ") : undefined,
         checkedAt: new Date().toLocaleString("ar-EG"),
       });
     } catch (error) {
       setHealth({
-        live: "error", ready: "error", missing: [],
+        live: "error", database: "error", ready: "error", missing: [],
         message: error instanceof Error ? error.message : "تعذر الاتصال بالـ API",
         checkedAt: new Date().toLocaleString("ar-EG"),
       });
@@ -110,6 +135,12 @@ export default function ApiHealthPanel() {
               </span>
             </div>
             <div className="flex items-center justify-between">
+              <span>اتصال PostgreSQL</span>
+              <span className={health.database === "connected" ? "text-emerald-600" : "text-rose-600"}>
+                {health.database === "connected" ? "متصل" : health.database === "unknown" ? "غير مفحوص" : "فشل"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
               <span>Database schema</span>
               <span className={health.ready === "ready" ? "text-emerald-600" : "text-amber-600"}>
                 {health.ready === "ready" ? "جاهز" : health.ready === "not_ready" ? "غير مكتمل" : "غير متاح"}
@@ -117,7 +148,7 @@ export default function ApiHealthPanel() {
             </div>
             {health.missing.length > 0 && <p className="text-amber-700">الجداول الناقصة: {health.missing.join(", ")}</p>}
             {health.message && <p className="break-words text-rose-600">{health.message}</p>}
-            <p className="break-all text-slate-400">API: {API_BASE_URL || "نفس نطاق الواجهة"}</p>
+            <p className="break-all text-slate-400">API: {API_BASE_URL || "نفس نطاق الواجهة عبر Nginx"}</p>
             {health.checkedAt && <p className="text-slate-400">آخر فحص: {health.checkedAt}</p>}
           </div>
           <button onClick={() => void checkHealth()} disabled={loading}

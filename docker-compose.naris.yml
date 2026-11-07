@@ -36,7 +36,7 @@ services:
       - |
         export PGPASSWORD="$NARIS_DB_ADMIN_PASSWORD"
         until pg_isready -h naris-postgres -U "$NARIS_DB_ADMIN_USER" -d naris_ops; do sleep 2; done
-        psql -h naris-postgres -U "$NARIS_DB_ADMIN_USER" -d naris_ops -v ON_ERROR_STOP=1 -v app_user="$NARIS_DB_USER" -v app_password="$NARIS_DB_PASSWORD" -f /bootstrap/init-app-role.sql
+        psql -h naris-postgres -U "$NARIS_DB_ADMIN_USER" -d naris_ops -v ON_ERROR_STOP=1 -v admin_user="$NARIS_DB_ADMIN_USER" -v app_user="$NARIS_DB_USER" -v app_password="$NARIS_DB_PASSWORD" -f /bootstrap/init-app-role.sql
     depends_on:
       naris-postgres:
         condition: service_healthy
@@ -53,7 +53,7 @@ services:
     env_file:
       - .env.naris
     environment:
-      DATABASE_URL: postgresql://${NARIS_DB_USER}:${NARIS_DB_PASSWORD}@naris-postgres:5432/naris_ops
+      DATABASE_URL: postgresql://${NARIS_DB_ADMIN_USER}:${NARIS_DB_ADMIN_PASSWORD}@naris-postgres:5432/naris_ops
       PG_SSL: "false"
     command: ["npm", "run", "db:migrate"]
     depends_on:

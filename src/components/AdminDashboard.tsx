@@ -43,15 +43,15 @@ import {
   isEligibleCleaner,
   getZones, 
   getKpis, 
-  getTemplates, 
+  getSopItems,
   getOperationalTasks, 
   getDeviceSwitches, 
   createTask, 
   updateTask,
   approveTask, 
   rejectTask, 
-  saveTemplate, 
-  deleteTemplate,
+  saveSopItem,
+  deleteSopItem,
   saveProfile,
   reassignPendingTasksFromInactiveCleaner,
   validateDatabase,
@@ -239,7 +239,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
         getProfiles(),
         getZones(),
         getKpis(),
-        getTemplates(),
+        getSopItems(),
         getOperationalTasks(),
         getDeviceSwitches()
       ]);
@@ -620,7 +620,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
     try {
       setLoading(true);
       setIsSavingTemplate(true);
-      await saveTemplate(selectedTemplate);
+      await saveSopItem(selectedTemplate);
       showToast("تم حفظ بند معيار SOP الموحد بنجاح ✅", "success");
       setIsSopModalOpen(false);
       setSelectedTemplate(null);
@@ -639,7 +639,7 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
 
     try {
       setLoading(true);
-      await deleteTemplate(selectedTemplate.id);
+      await deleteSopItem(selectedTemplate.id);
       showToast("تم حذف بند معيار SOP الموحد بنجاح 🗑️", "success");
       setIsSopModalOpen(false);
       setSelectedTemplate(null);
@@ -3039,8 +3039,8 @@ export default function AdminDashboard({ user, onLogout }: AdminDashboardProps) 
                 <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-5 border-b border-slate-100 pb-4">
                     <div>
-                      <h3 className="text-sm font-bold text-slate-800">إدارة بنود ومقاييس الجودة (SOP Templates)</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">القائمة المرجعية للأعمال اليومية المتكررة والتي يولدها السيرفر تلقائياً بمواعيدها كل يوم</p>
+                      <h3 className="text-sm font-bold text-slate-800">إدارة بنود SOP الفعلية (Recurring SOP Items)</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">مصدر المهام المتكررة الذي يقرأه محرك التوليد مباشرة من جدول sop_items</p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">

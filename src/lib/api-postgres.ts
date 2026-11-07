@@ -267,11 +267,50 @@ export async function getTasks(dateStr = getLocalDateString()): Promise<(TaskIns
 export async function getTasksForRange(startDate: string, endDate: string): Promise<(TaskInstance & {
   zone?: Zone; assignee?: Profile; template?: TaskTemplate;
 })[]> {
-  const result = await apiRequest<ApiEnvelope<TaskInstance[]>>(
-    "/api/tasks?startDate=" + encodeURIComponent(startDate) +
-    "&endDate=" + encodeURIComponent(endDate) + "&limit=500",
-  );
-  return enrichTasks(result.data);
+  const isValidDate = (value: string): boolean => {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+    const parsed = new Date(value + "T00:00:00.000Z");
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  if (!isValidDate(startDate) || !isValidDate(endDate) || startDate > endDate) {
+    throw new Error("يرجى تحديد فترة أرشيف صحيحة من تاريخ البداية إلى تاريخ النهاية.");
+  }
+
+  // API limits each request to 366 inclusive calendar days and 500 rows.
+  // Split longer ranges and paginate each chunk to avoid silent truncation.
+  const pageSize = 500;
+  const maxOffset = 1_000_000;
+  const dayMs = 86_400_000;
+  const finalDay = Date.parse(endDate + "T00:00:00.000Z");
+  let chunkStart = Date.parse(startDate + "T00:00:00.000Z");
+  const allTasks: TaskInstance[] = [];
+
+  while (chunkStart <= finalDay) {
+    const chunkEnd = Math.min(chunkStart + 365 * dayMs, finalDay);
+    const chunkStartDate = new Date(chunkStart).toISOString().slice(0, 10);
+    const chunkEndDate = new Date(chunkEnd).toISOString().slice(0, 10);
+    let offset = 0;
+
+    while (true) {
+      if (offset > maxOffset) {
+        throw new Error("حجم الأرشيف تجاوز الحد الآمن للاسترجاع. قسّم الفترة إلى نطاقات أصغر.");
+      }
+      const result = await apiRequest<ApiEnvelope<TaskInstance[]>>(
+        "/api/tasks?startDate=" + encodeURIComponent(chunkStartDate) +
+        "&endDate=" + encodeURIComponent(chunkEndDate) +
+        "&limit=" + pageSize + "&offset=" + offset,
+      );
+      const page = Array.isArray(result.data) ? result.data : [];
+      allTasks.push(...page);
+      if (page.length < pageSize) break;
+      offset += page.length;
+    }
+
+    chunkStart = chunkEnd + dayMs;
+  }
+
+  // Enrich once after all pages have been loaded.
+  return enrichTasks(allTasks);
 }
 
 export function listenTasksForDate(

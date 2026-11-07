@@ -161,7 +161,13 @@ export default function PhotoCapture({ label, onPhotoUploaded, required = true, 
         });
       }, 300);
 
-      const result = await uploadToCloudinary(payload, folder);
+      const pathParts = storagePath.split("/");
+      if (pathParts.length < 4 || pathParts[0] !== "task-photos") {
+        throw new Error("مسار صورة المهمة غير صالح. أعد فتح المهمة وحاول مرة أخرى.");
+      }
+      const taskId = pathParts[2];
+      const side = pathParts[pathParts.length - 1].toLowerCase().startsWith("before") ? "before" : "after";
+      const result = await uploadToCloudinary(payload, folder, { taskId, side });
       const publicId = result.public_id;
       if (!publicId || !result.secure_url) throw new Error("Cloudinary لم يُرجع معرف الصورة ورابطها الآمن.");
       const uploadedMetadata = {
